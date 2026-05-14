@@ -1,3 +1,31 @@
-.env 
-dist/ 
-build/ 
+# Environment variables — NEVER commit these
+.env
+**/.env
+*.env
+
+# Build outputs
+dist/
+build/
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Python
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+ml-service/models/*.pkl
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
