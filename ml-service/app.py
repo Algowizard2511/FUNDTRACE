@@ -127,14 +127,14 @@ def get_or_train_model():
     )
     model.fit(X)
     
-    print("✅ Isolation Forest model trained on synthetic fraud data")
+    print("[SUCCESS] Isolation Forest model trained on synthetic fraud data")
     return model, scaler
 
 
 @app.on_event("startup")
 async def startup():
     get_or_train_model()
-    print("🚀 FundTrace ML Service ready")
+    print("[READY] FundTrace ML Service ready")
 
 
 @app.get("/health")

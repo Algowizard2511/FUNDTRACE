@@ -351,6 +351,37 @@ app.post('/api/auth/login', async (req, res) => {
   res.json({ token, user: { name: user.name, email: user.email, role: user.role } });
 });
 
+// REGISTER
+app.post('/api/auth/register', async (req, res) => {
+  const { name, email, password, role } = req.body;
+  if (!name || !email || !password) {
+    return res.status(400).json({ error: 'Name, email, and password are required' });
+  }
+  if (password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+  const existing = db.users.find(u => u.email === email);
+  if (existing) {
+    return res.status(409).json({ error: 'An account with this email already exists' });
+  }
+  const newUser = {
+    _id: `u${db.users.length + 1}`,
+    name,
+    email,
+    password: bcrypt.hashSync(password, 10),
+    role: role || 'ANALYST',
+    createdAt: new Date(),
+  };
+  db.users.push(newUser);
+  const token = jwt.sign(
+    { userId: newUser._id, role: newUser.role, name: newUser.name },
+    JWT_SECRET,
+    { expiresIn: '24h' }
+  );
+  console.log(`✅ New user registered: ${email} (${newUser.role})`);
+  res.status(201).json({ token, user: { name: newUser.name, email: newUser.email, role: newUser.role } });
+});
+
 // DASHBOARD
 app.get('/api/dashboard/stats', (req, res) => {
   const since24h = Date.now() - 86400000;

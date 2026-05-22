@@ -24,6 +24,14 @@ export function AuthProvider({ children }) {
     return data;
   };
 
+  const signup = async (name, email, password, role) => {
+    const data = await authApi.register({ name, email, password, role });
+    localStorage.setItem('fundtrace_token', data.token);
+    localStorage.setItem('fundtrace_user', JSON.stringify(data.user));
+    setUser(data.user);
+    return data;
+  };
+
   const logout = () => {
     localStorage.removeItem('fundtrace_token');
     localStorage.removeItem('fundtrace_user');
@@ -31,7 +39,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, login, signup, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );

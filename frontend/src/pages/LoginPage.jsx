@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Shield, Eye, EyeOff, AlertTriangle, Zap } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -131,6 +131,16 @@ export default function LoginPage() {
           <div style={{ marginTop: 20, padding: '12px 14px', borderRadius: 8, background: 'rgba(0,212,255,0.06)', border: '1px solid rgba(0,212,255,0.15)' }}>
             <p style={{ fontSize: 11, color: '#475569', marginBottom: 4 }}>Demo Credentials</p>
             <p style={{ fontSize: 12, color: '#00d4ff', fontFamily: 'monospace' }}>admin@fundtrace.ai / FundTrace@2024</p>
+          </div>
+
+          {/* Link to Signup */}
+          <div style={{ marginTop: 16, textAlign: 'center' }}>
+            <p style={{ fontSize: 13, color: '#475569' }}>
+              Don't have an account?{' '}
+              <Link to="/signup" style={{ color: '#00d4ff', fontWeight: 600, textDecoration: 'none' }}>
+                Create Account
+              </Link>
+            </p>
           </div>
         </div>
 
