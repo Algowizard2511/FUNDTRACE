@@ -20,7 +20,9 @@ export default function LoginPage() {
       toast.success('Access granted. Welcome to FundTrace AI.');
       navigate('/dashboard');
     } catch (err) {
-      toast.error(err?.error || 'Authentication failed');
+      // err.error comes from server JSON, err.message is axios network error
+      const msg = err?.error || err?.message || 'Authentication failed. Check credentials and try again.';
+      toast.error(msg);
     } finally {
       setLoading(false);
     }

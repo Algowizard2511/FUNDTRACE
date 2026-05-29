@@ -20,7 +20,11 @@ api.interceptors.response.use(
   (err) => {
     if (err.response?.status === 401) {
       localStorage.removeItem('fundtrace_token');
-      window.location.href = '/login';
+      // Only force-redirect to login if on a protected page (not already on login/signup)
+      const onAuthPage = ['/login', '/signup'].some(p => window.location.pathname.startsWith(p));
+      if (!onAuthPage) {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(err.response?.data || err);
   }
