@@ -133,7 +133,8 @@ export default function TransactionsPage() {
           <option value="LAYERING">Layering</option>
           <option value="FAN_OUT">Fan-Out</option>
           <option value="DORMANT_ACTIVATION">Dormant Activation</option>
-          <option value="MULE">Mule</option>
+          <option value="MULE_TRANSFER">Mule Transfer</option>
+          <option value="HIGH_VELOCITY">High Velocity</option>
           <option value="NONE">Clean</option>
         </select>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>

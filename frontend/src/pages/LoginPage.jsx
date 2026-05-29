@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('admin@fundtrace.ai');
-  const [password, setPassword] = useState('FundTrace@2024');
+  const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();

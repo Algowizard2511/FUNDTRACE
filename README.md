@@ -3,44 +3,60 @@
 
 ![FundTrace AI](https://img.shields.io/badge/FundTrace%20AI-AML%20Platform-00d4ff?style=for-the-badge)
 ![Status](https://img.shields.io/badge/Status-Live%20Demo-10b981?style=for-the-badge)
-![Stack](https://img.shields.io/badge/Stack-React%20%7C%20Node.js%20%7C%20FastAPI%20%7C%20MongoDB-7c3aed?style=for-the-badge)
+![Stack](https://img.shields.io/badge/Stack-React%20%7C%20Node.js%20%7C%20FastAPI-7c3aed?style=for-the-badge)
+
+---
+
+## 🌐 Live Demo
+
+> **[👉 Open FundTrace AI Demo](https://your-frontend.onrender.com)**  ← *(Update after deployment)*
+
+| Credential | Value |
+|-----------|-------|
+| **Email** | `admin@fundtrace.ai` |
+| **Password** | `FundTrace@2024` |
+
+> ⚠️ *Note: The backend runs on Render free tier. If the first load is slow (~30 sec), please wait — it's waking up from sleep.*
 
 ---
 
 ## 🚀 Quick Start
 
-### Prerequisites
-- Node.js 18+
-- Python 3.10+
-- MongoDB Atlas account (or local MongoDB)
+### ⚡ Easiest: One-Click Demo (No MongoDB needed)
+```bash
+# Just double-click START_DEMO.bat
+# OR run manually:
+cd backend && npm install && node mock-server.js
+# In another terminal:
+cd frontend && npm install && npm run dev
+```
+Open **http://localhost:5173** → Login with `admin@fundtrace.ai` / `FundTrace@2024`
 
-### 1. Setup MongoDB
-1. Create a free cluster at [MongoDB Atlas](https://cloud.mongodb.com)
-2. Copy connection string into `backend/.env` as `MONGO_URI`
+### Full Stack (with MongoDB)
 
-### 2. Start Backend
+#### Prerequisites
+- Node.js 18+, Python 3.10+, MongoDB Atlas account
+
+#### 1. Configure Backend
 ```bash
 cd backend
-npm start
+cp .env.example .env
+# Edit .env and add your MONGO_URI
+npm install && npm start
 ```
 
-### 3. Start Frontend
+#### 2. Start Frontend
 ```bash
 cd frontend
-npm run dev
+npm install && npm run dev
 ```
 
-### 4. Start ML Service (Optional)
+#### 3. ML Service (Optional)
 ```bash
 cd ml-service
 pip install -r requirements.txt
 python -m uvicorn app:app --reload --port 8000
 ```
-
-### 5. Open App
-Navigate to: **http://localhost:5173**
-
-**Login:** `admin@fundtrace.ai` / `FundTrace@2024`
 
 ---
 

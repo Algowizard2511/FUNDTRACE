@@ -1,0 +1,33 @@
+# render.yaml — One-click Render.com deployment config
+# Push to GitHub, connect repo at dashboard.render.com
+
+services:
+  # Backend (Node.js in-memory demo server)
+  - type: web
+    name: fundtrace-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node mock-server.js
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: NODE_ENV
+        value: production
+
+  # Frontend (React static site)
+  - type: web
+    name: fundtrace-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://fundtrace-backend.onrender.com/api
+      - key: VITE_SOCKET_URL
+        value: https://fundtrace-backend.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

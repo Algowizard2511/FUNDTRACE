@@ -193,7 +193,7 @@ export default function DashboardPage() {
           </div>
           <div style={{ height: 200 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={txByHour.length ? txByHour : Array.from({length:12},(_,i)=>({hour:`${i*2}:00`,count:Math.floor(Math.random()*50+10)}))}>
+              <AreaChart data={txByHour.length ? txByHour : Array.from({length:12},(_,i)=>({hour:`${i*2}:00`,count:0}))}>
                 <defs>
                   <linearGradient id="txGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#00d4ff" stopOpacity={0.3} />

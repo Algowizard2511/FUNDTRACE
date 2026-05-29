@@ -37,7 +37,7 @@ function NodePanel({ node, onClose }) {
           <X size={16} />
         </button>
       </div>
-      <div style={{ display: 'flex', flex: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {[
           ['Account ID', node.id, true],
           ['Name', node.name],

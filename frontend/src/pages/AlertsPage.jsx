@@ -231,7 +231,13 @@ export default function AlertsPage() {
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
-        {['OPEN', 'INVESTIGATING', 'RESOLVED', 'FALSE_POSITIVE', ''].map((s, i) => (
+        {[
+          { s: 'OPEN', label: 'Open' },
+          { s: 'INVESTIGATING', label: 'Investigating' },
+          { s: 'RESOLVED', label: 'Resolved' },
+          { s: 'FALSE_POSITIVE', label: 'False Positive' },
+          { s: '', label: 'All Statuses' },
+        ].map(({ s, label }) => (
           <button
             key={s || 'all'}
             onClick={() => setFilter(f => ({...f, status: s}))}
@@ -243,7 +249,7 @@ export default function AlertsPage() {
               cursor: 'pointer', transition: 'all 0.2s'
             }}
           >
-            {s || 'All'}
+            {label}
           </button>
         ))}
       </div>

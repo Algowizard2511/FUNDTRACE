@@ -11,7 +11,8 @@ export function SocketProvider({ children }) {
   const listenersRef = useRef({});
 
   useEffect(() => {
-    const s = io('http://localhost:5000', {
+    const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
+    const s = io(SOCKET_URL, {
       transports: ['websocket', 'polling'],
       reconnectionAttempts: 5,
       reconnectionDelay: 2000,
