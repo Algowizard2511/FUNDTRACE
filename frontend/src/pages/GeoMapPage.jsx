@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { txApi, alertApi, accountApi } from '../services/api';
+import { txApi, accountApi } from '../services/api';
 import { useSocket } from '../contexts/SocketContext';
 import { useState, useEffect } from 'react';
-import { MapPin, AlertTriangle, Zap, Filter } from 'lucide-react';
+import { MapPin, AlertTriangle } from 'lucide-react';
 
 const CITY_COORDS = {
   'Mumbai': { lat: 19.076, lng: 72.877 },
@@ -30,19 +30,19 @@ function GeoNode({ city, count, maxCount, isSuspicious, onClick }) {
   if (!coords) return null;
   const pos = toSVG(coords.lat, coords.lng);
   const radius = Math.max(8, Math.min(28, (count / maxCount) * 28));
-  const color = isSuspicious ? '#ef4444' : '#00d4ff';
+  const color = isSuspicious ? 'var(--danger-2)' : 'var(--blue-2)';
 
   return (
     <g onClick={() => onClick(city)} style={{ cursor: 'pointer' }}>
       {isSuspicious && (
-        <circle cx={pos.x} cy={pos.y} r={radius + 8} fill={`${color}22`}>
+        <circle cx={pos.x} cy={pos.y} r={radius + 8} fill="rgba(200,40,40,0.15)">
           <animate attributeName="r" values={`${radius + 4};${radius + 14};${radius + 4}`} dur="2s" repeatCount="indefinite" />
         </circle>
       )}
-      <circle cx={pos.x} cy={pos.y} r={radius} fill={`${color}cc`} stroke={color} strokeWidth="1.5" />
-      <circle cx={pos.x} cy={pos.y} r={radius * 0.4} fill={color} opacity="0.8" />
-      <text x={pos.x} y={pos.y + radius + 14} textAnchor="middle" fontSize="10" fill="#94a3b8" fontFamily="Inter">{city}</text>
-      <text x={pos.x} y={pos.y + 4} textAnchor="middle" fontSize="9" fill="#fff" fontWeight="bold">{count}</text>
+      <circle cx={pos.x} cy={pos.y} r={radius} fill={color} stroke={color} strokeWidth="1.5" opacity="0.8" />
+      <circle cx={pos.x} cy={pos.y} r={radius * 0.4} fill="#fff" opacity="0.9" />
+      <text x={pos.x} y={pos.y + radius + 14} textAnchor="middle" fontSize="10" fill="var(--text-3)" fontWeight="600" fontFamily="Inter">{city}</text>
+      <text x={pos.x} y={pos.y + 4} textAnchor="middle" fontSize="9" fill="#000" fontWeight="800">{count}</text>
     </g>
   );
 }
@@ -94,43 +94,37 @@ export default function GeoMapPage() {
 
   return (
     <div style={{ padding: 24, height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* ── Header ── */}
       <div style={{ marginBottom: 20, flexShrink: 0 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, color: '#e2e8f0' }}>Geo Fraud Intelligence Map</h1>
-        <p style={{ fontSize: 13, color: '#475569', marginTop: 4 }}>
-          Transaction hotspots across India • {suspiciousCities.size} suspicious regions
+        <h1 style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-1)' }}>Geo Fraud Intelligence Map</h1>
+        <p style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 4 }}>
+          Transaction hotspots across India • <span style={{ color: 'var(--danger-2)', fontWeight: 600 }}>{suspiciousCities.size} suspicious regions</span>
         </p>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 16, flex: 1, minHeight: 0 }}>
-        {/* SVG India Map */}
+
+        {/* ── SVG India Map ── */}
         <div className="glass-card" style={{ padding: 20, overflow: 'hidden', position: 'relative' }}>
           <div style={{ position: 'absolute', top: 16, left: 16, display: 'flex', gap: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#64748b' }}>
-              <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#00d4ff' }} />Clean Activity
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-3)', fontWeight: 600 }}>
+              <div style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--blue-2)' }} />Clean Activity
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#64748b' }}>
-              <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#ef4444' }} />Suspicious Activity
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-3)', fontWeight: 600 }}>
+              <div style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--danger-2)' }} />Suspicious Activity
             </div>
           </div>
 
           <svg viewBox="0 0 600 500" style={{ width: '100%', height: '100%' }}>
-            {/* India outline - simplified */}
-            <defs>
-              <filter id="glow">
-                <feGaussianBlur stdDeviation="3" result="coloredBlur" />
-                <feMerge><feMergeNode in="coloredBlur" /><feMergeNode in="SourceGraphic" /></feMerge>
-              </filter>
-            </defs>
-
             {/* Background grid */}
             <rect width="600" height="500" fill="transparent" />
 
             {/* Grid lines */}
             {[...Array(6)].map((_, i) => (
-              <line key={`h${i}`} x1="0" y1={i * 83} x2="600" y2={i * 83} stroke="#1a3a52" strokeWidth="0.5" />
+              <line key={`h${i}`} x1="0" y1={i * 83} x2="600" y2={i * 83} stroke="var(--border)" strokeWidth="1" />
             ))}
             {[...Array(7)].map((_, i) => (
-              <line key={`v${i}`} x1={i * 100} y1="0" x2={i * 100} y2="500" stroke="#1a3a52" strokeWidth="0.5" />
+              <line key={`v${i}`} x1={i * 100} y1="0" x2={i * 100} y2="500" stroke="var(--border)" strokeWidth="1" />
             ))}
 
             {/* Connection lines between suspicious cities */}
@@ -144,7 +138,7 @@ export default function GeoMapPage() {
               const p2 = toSVG(to.lat, to.lng);
               return (
                 <line key={`conn-${i}`} x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y}
-                  stroke="#ef4444" strokeWidth="1" strokeDasharray="4,4" opacity="0.4">
+                  stroke="var(--danger-2)" strokeWidth="1" strokeDasharray="4,4" opacity="0.5">
                   <animate attributeName="stroke-dashoffset" from="0" to="8" dur="1s" repeatCount="indefinite" />
                 </line>
               );
@@ -164,29 +158,30 @@ export default function GeoMapPage() {
 
             {/* Empty state */}
             {cityList.length === 0 && (
-              <text x="300" y="250" textAnchor="middle" fill="#475569" fontSize="14" fontFamily="Inter">
+              <text x="300" y="250" textAnchor="middle" fill="var(--text-3)" fontSize="14" fontFamily="Inter">
                 Waiting for transaction data...
               </text>
             )}
           </svg>
         </div>
 
-        {/* Right panel */}
+        {/* ── Right panel ── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, overflow: 'auto' }}>
+
           {/* Selected city detail */}
           {selectedCity && (
-            <div className="glass-card" style={{ padding: 16, border: '1px solid rgba(0,212,255,0.3)' }}>
+            <div className="glass-card card-gold-top" style={{ padding: 16 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                <MapPin size={16} color="#00d4ff" />
-                <h3 style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0' }}>{selectedCity}</h3>
+                <MapPin size={16} color="var(--gold)" />
+                <h3 style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>{selectedCity}</h3>
                 {suspiciousCities.has(selectedCity) && (
                   <span className="badge badge-critical" style={{ fontSize: 9 }}>SUSPICIOUS</span>
                 )}
               </div>
-              <div style={{ fontSize: 13, color: '#94a3b8' }}>
-                <div style={{ marginBottom: 6 }}>Transactions: <strong style={{ color: '#e2e8f0' }}>{cityData[selectedCity] || 0}</strong></div>
-                <div style={{ marginBottom: 6 }}>Activity Share: <strong style={{ color: '#00d4ff' }}>{((cityData[selectedCity] || 0) / Math.max(1, Object.values(cityData).reduce((a, b) => a + b, 0)) * 100).toFixed(1)}%</strong></div>
-                <div>Status: <strong style={{ color: suspiciousCities.has(selectedCity) ? '#ef4444' : '#10b981' }}>
+              <div style={{ fontSize: 13, color: 'var(--text-2)' }}>
+                <div style={{ marginBottom: 6 }}>Transactions: <strong style={{ color: 'var(--text-1)' }}>{cityData[selectedCity] || 0}</strong></div>
+                <div style={{ marginBottom: 6 }}>Activity Share: <strong style={{ color: 'var(--blue-2)' }}>{((cityData[selectedCity] || 0) / Math.max(1, Object.values(cityData).reduce((a, b) => a + b, 0)) * 100).toFixed(1)}%</strong></div>
+                <div>Status: <strong style={{ color: suspiciousCities.has(selectedCity) ? 'var(--danger-2)' : 'var(--success-2)' }}>
                   {suspiciousCities.has(selectedCity) ? 'SUSPICIOUS' : 'NORMAL'}
                 </strong></div>
               </div>
@@ -195,7 +190,7 @@ export default function GeoMapPage() {
 
           {/* City leaderboard */}
           <div className="glass-card" style={{ padding: 16, flex: 1 }}>
-            <h3 style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0', marginBottom: 14 }}>
+            <h3 style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', marginBottom: 14 }}>
               Transaction Hotspots
             </h3>
             {cityList.slice(0, 10).map(([city, count], i) => (
@@ -204,27 +199,27 @@ export default function GeoMapPage() {
                 onClick={() => setSelectedCity(city)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '8px 0', borderBottom: '1px solid rgba(26,58,82,0.4)',
+                  padding: '8px 0', borderBottom: '1px solid var(--border)',
                   cursor: 'pointer'
                 }}
               >
-                <span style={{ fontSize: 11, color: '#475569', width: 16 }}>#{i + 1}</span>
+                <span style={{ fontSize: 11, color: 'var(--text-3)', width: 16 }}>#{i + 1}</span>
                 <div style={{
                   width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-                  background: suspiciousCities.has(city) ? '#ef4444' : '#00d4ff',
-                  boxShadow: `0 0 6px ${suspiciousCities.has(city) ? '#ef4444' : '#00d4ff'}`
+                  background: suspiciousCities.has(city) ? 'var(--danger-2)' : 'var(--blue-2)',
+                  boxShadow: `0 0 6px ${suspiciousCities.has(city) ? 'var(--danger-2)' : 'var(--blue-2)'}`
                 }} />
-                <span style={{ fontSize: 13, color: '#e2e8f0', flex: 1 }}>{city}</span>
+                <span style={{ fontSize: 13, color: 'var(--text-1)', flex: 1 }}>{city}</span>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0' }}>{count}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-1)' }}>{count}</span>
                   {suspiciousCities.has(city) && (
-                    <AlertTriangle size={10} color="#ef4444" />
+                    <AlertTriangle size={10} color="var(--danger-2)" />
                   )}
                 </div>
               </div>
             ))}
             {cityList.length === 0 && (
-              <p style={{ color: '#475569', fontSize: 12, textAlign: 'center', padding: 20 }}>
+              <p style={{ color: 'var(--text-3)', fontSize: 12, textAlign: 'center', padding: 20 }}>
                 Collecting geo data...
               </p>
             )}
@@ -232,16 +227,16 @@ export default function GeoMapPage() {
 
           {/* Stats */}
           <div className="glass-card" style={{ padding: 16 }}>
-            <h3 style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0', marginBottom: 12 }}>
+            <h3 style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)', marginBottom: 12 }}>
               Risk Summary
             </h3>
             {[
-              { label: 'Cities Monitored', value: cityList.length, color: '#00d4ff' },
-              { label: 'Suspicious Regions', value: suspiciousCities.size, color: '#ef4444' },
-              { label: 'Total Events', value: Object.values(cityData).reduce((a, b) => a + b, 0), color: '#f59e0b' },
+              { label: 'Cities Monitored', value: cityList.length, color: 'var(--blue-2)' },
+              { label: 'Suspicious Regions', value: suspiciousCities.size, color: 'var(--danger-2)' },
+              { label: 'Total Events', value: Object.values(cityData).reduce((a, b) => a + b, 0), color: 'var(--gold)' },
             ].map(({ label, value, color }) => (
               <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 12 }}>
-                <span style={{ color: '#64748b' }}>{label}</span>
+                <span style={{ color: 'var(--text-2)' }}>{label}</span>
                 <span style={{ color, fontWeight: 700 }}>{value}</span>
               </div>
             ))}

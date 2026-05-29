@@ -6,10 +6,10 @@ import { Bell, AlertTriangle, CheckCircle, Clock, Shield, ChevronRight, Zap } fr
 import toast from 'react-hot-toast';
 
 const SEVERITY_CONFIG = {
-  CRITICAL: { color: '#ef4444', bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.3)', icon: '🔴' },
-  HIGH: { color: '#f59e0b', bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.3)', icon: '🟡' },
-  MEDIUM: { color: '#00d4ff', bg: 'rgba(0,212,255,0.1)', border: 'rgba(0,212,255,0.3)', icon: '🔵' },
-  LOW: { color: '#10b981', bg: 'rgba(16,185,129,0.1)', border: 'rgba(16,185,129,0.3)', icon: '🟢' },
+  CRITICAL: { color: 'var(--danger-2)', bg: 'rgba(200,40,40,0.1)', border: 'rgba(200,40,40,0.35)', icon: '🔴' },
+  HIGH:     { color: 'var(--warning-2)', bg: 'rgba(201,133,32,0.1)', border: 'rgba(201,133,32,0.35)', icon: '🟡' },
+  MEDIUM:   { color: 'var(--blue-2)',   bg: 'rgba(26,108,188,0.1)', border: 'rgba(26,108,188,0.35)', icon: '🔵' },
+  LOW:      { color: 'var(--success-2)', bg: 'rgba(15,122,82,0.1)', border: 'rgba(15,122,82,0.35)', icon: '🟢' },
 };
 
 const ALERT_TYPE_DESC = {
@@ -30,9 +30,9 @@ function AlertCard({ alert, onAction }) {
   return (
     <div
       style={{
-        background: '#111f2e', border: `1px solid ${cfg.border}`,
-        borderRadius: 12, padding: 16, marginBottom: 12, cursor: 'pointer',
-        transition: 'all 0.2s ease',
+        background: 'var(--card)', border: `1px solid ${cfg.border}`,
+        borderRadius: 10, padding: 16, marginBottom: 12, cursor: 'pointer',
+        transition: 'all 0.22s ease',
         ...(alert.severity === 'CRITICAL' ? { animation: 'alertPulse 2s ease-in-out infinite' } : {})
       }}
       onClick={() => setExpanded(!expanded)}
@@ -51,47 +51,47 @@ function AlertCard({ alert, onAction }) {
 
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0' }}>
+            <span style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--text-1)' }}>
               {alert.alert_type?.replace(/_/g, ' ')}
             </span>
             <span className={`badge badge-${alert.severity?.toLowerCase()}`}>{alert.severity}</span>
-            <span style={{ fontSize: 11, color: '#475569', marginLeft: 'auto' }}>
+            <span style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 'auto', fontWeight: 500 }}>
               {new Date(alert.createdAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}
             </span>
           </div>
 
-          <p style={{ fontSize: 12, color: '#64748b', marginBottom: 8 }}>
+          <p style={{ fontSize: 12.5, color: 'var(--text-2)', marginBottom: 8, lineHeight: 1.4 }}>
             {ALERT_TYPE_DESC[alert.alert_type] || alert.description?.slice(0, 100)}
           </p>
 
           {/* Risk score bar */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-            <span style={{ fontSize: 11, color: '#475569', width: 60 }}>Risk Score</span>
-            <div className="risk-bar" style={{ flex: 1 }}>
-              <div className="risk-bar-fill" style={{ width: `${alert.risk_score}%`, background: cfg.color }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <span style={{ fontSize: 10.5, color: 'var(--text-3)', width: 60, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>Risk Score</span>
+            <div className="risk-bar" style={{ flex: 1, height: 5, borderRadius: 2.5 }}>
+              <div className="risk-bar-fill" style={{ width: `${alert.risk_score}%`, background: cfg.color, borderRadius: 2.5 }} />
             </div>
-            <span style={{ fontSize: 12, color: cfg.color, fontWeight: 700 }}>{alert.risk_score}</span>
+            <span style={{ fontSize: 12, color: cfg.color, fontWeight: 800 }}>{alert.risk_score}</span>
           </div>
 
           {/* Account refs */}
           {alert.account_references?.length > 0 && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
               {alert.account_references.slice(0, 3).map(acc => (
                 <span key={acc} style={{
-                  fontSize: 10, color: '#94a3b8', fontFamily: 'monospace',
-                  background: 'rgba(0,212,255,0.08)', padding: '2px 8px', borderRadius: 4
+                  fontSize: 10, color: 'var(--blue-2)', fontFamily: 'JetBrains Mono, monospace', fontWeight: 600,
+                  background: 'rgba(26,108,188,0.1)', padding: '2px 8px', borderRadius: 4, border: '1px solid rgba(26,108,188,0.2)'
                 }}>{acc}</span>
               ))}
               {alert.account_references.length > 3 && (
-                <span style={{ fontSize: 10, color: '#475569' }}>+{alert.account_references.length - 3} more</span>
+                <span style={{ fontSize: 10, color: 'var(--text-3)', fontWeight: 600 }}>+{alert.account_references.length - 3} more</span>
               )}
             </div>
           )}
 
           {/* Expanded description */}
           {expanded && alert.description && (
-            <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: 8, padding: 12, marginBottom: 10 }}>
-              <p style={{ fontSize: 12, color: '#94a3b8' }}>{alert.description}</p>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+              <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.5 }}>{alert.description}</p>
             </div>
           )}
 
@@ -102,21 +102,21 @@ function AlertCard({ alert, onAction }) {
                 <button
                   onClick={() => onAction(alert, 'INVESTIGATING')}
                   className="btn-ghost"
-                  style={{ padding: '5px 12px', fontSize: 12 }}
+                  style={{ padding: '6px 14px', fontSize: 12.5, background: 'var(--surface)' }}
                 >
-                  <Clock size={12} />Investigate
+                  <Clock size={13} />Investigate
                 </button>
                 <button
                   onClick={() => onAction(alert, 'create_case')}
                   className="btn-primary"
-                  style={{ padding: '5px 12px', fontSize: 12 }}
+                  style={{ padding: '6px 14px', fontSize: 12.5 }}
                 >
-                  <Shield size={12} />Create Case
+                  <Shield size={13} />Create Case
                 </button>
                 <button
                   onClick={() => onAction(alert, 'FALSE_POSITIVE')}
                   className="btn-ghost"
-                  style={{ padding: '5px 12px', fontSize: 12, color: '#475569' }}
+                  style={{ padding: '6px 14px', fontSize: 12.5, color: 'var(--text-3)', border: 'none' }}
                 >
                   Dismiss
                 </button>
@@ -129,7 +129,7 @@ function AlertCard({ alert, onAction }) {
             )}
           </div>
         </div>
-        <ChevronRight size={16} color="#475569" style={{ transform: expanded ? 'rotate(90deg)' : '', transition: 'transform 0.2s', flexShrink: 0 }} />
+        <ChevronRight size={16} color="var(--text-3)" style={{ transform: expanded ? 'rotate(90deg)' : '', transition: 'transform 0.2s', flexShrink: 0 }} />
       </div>
     </div>
   );
@@ -148,7 +148,6 @@ export default function AlertsPage() {
   const { data: stats } = useQuery({ queryKey: ['alert-stats'], queryFn: alertApi.getStats });
 
   const allAlerts = data?.alerts || [];
-  // Merge live alerts
   const merged = [...liveAlerts.filter(la => !allAlerts.find(a => a.alert_id === la.alert_id)), ...allAlerts];
 
   const handleAction = async (alert, action) => {
@@ -192,44 +191,44 @@ export default function AlertsPage() {
 
   return (
     <div style={{ padding: 24, maxWidth: 900 }}>
-      {/* Header */}
+      {/* ── Header ── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: '#e2e8f0' }}>Alert Center</h1>
-          <p style={{ fontSize: 13, color: '#475569', marginTop: 4 }}>
-            {stats?.open || 0} open alerts • {stats?.critical || 0} critical
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-1)' }}>Alert Center</h1>
+          <p style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 4 }}>
+            {stats?.open || 0} open alerts • <span style={{ color: 'var(--danger-2)', fontWeight: 600 }}>{stats?.critical || 0} critical</span>
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           {stats?.critical > 0 && (
             <div style={{
               display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px',
-              background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8
+              background: 'rgba(200,40,40,0.1)', border: '1px solid rgba(200,40,40,0.3)', borderRadius: 8
             }}>
               <div className="pulse-dot danger" style={{ width: 8, height: 8 }} />
-              <span style={{ fontSize: 12, color: '#ef4444', fontWeight: 700 }}>{stats.critical} CRITICAL</span>
+              <span style={{ fontSize: 12, color: 'var(--danger-2)', fontWeight: 700 }}>{stats.critical} CRITICAL</span>
             </div>
           )}
         </div>
       </div>
 
-      {/* Stats pills */}
+      {/* ── Stats pills ── */}
       <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
         {[
-          { label: 'Total', value: stats?.total || 0, color: '#94a3b8' },
-          { label: 'Open', value: stats?.open || 0, color: '#f59e0b' },
-          { label: 'Critical', value: stats?.critical || 0, color: '#ef4444' },
+          { label: 'Total', value: stats?.total || 0, color: 'var(--text-2)' },
+          { label: 'Open', value: stats?.open || 0, color: 'var(--warning-2)' },
+          { label: 'Critical', value: stats?.critical || 0, color: 'var(--danger-2)' },
         ].map(({ label, value, color }) => (
           <div key={label} style={{
-            padding: '8px 18px', borderRadius: 8, background: '#111f2e', border: '1px solid #1a3a52', fontSize: 13
+            padding: '8px 18px', borderRadius: 8, background: 'var(--card)', border: '1px solid var(--border)', fontSize: 13
           }}>
-            <span style={{ color: '#475569' }}>{label}: </span>
-            <span style={{ color, fontWeight: 700 }}>{value}</span>
+            <span style={{ color: 'var(--text-3)', fontWeight: 500 }}>{label}: </span>
+            <span style={{ color, fontWeight: 800 }}>{value}</span>
           </div>
         ))}
       </div>
 
-      {/* Filters */}
+      {/* ── Filters ── */}
       <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
         {[
           { s: 'OPEN', label: 'Open' },
@@ -242,10 +241,10 @@ export default function AlertsPage() {
             key={s || 'all'}
             onClick={() => setFilter(f => ({...f, status: s}))}
             style={{
-              padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
-              background: filter.status === s ? 'rgba(0,212,255,0.15)' : '#111f2e',
-              border: filter.status === s ? '1px solid rgba(0,212,255,0.4)' : '1px solid #1a3a52',
-              color: filter.status === s ? '#00d4ff' : '#64748b',
+              padding: '7px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600,
+              background: filter.status === s ? 'rgba(26,108,188,0.15)' : 'var(--card)',
+              border: filter.status === s ? '1px solid rgba(26,108,188,0.4)' : '1px solid var(--border)',
+              color: filter.status === s ? 'var(--blue-2)' : 'var(--text-2)',
               cursor: 'pointer', transition: 'all 0.2s'
             }}
           >
@@ -254,11 +253,11 @@ export default function AlertsPage() {
         ))}
       </div>
 
-      {/* Alerts list */}
+      {/* ── Alerts list ── */}
       {displayed.length === 0 ? (
         <div className="glass-card" style={{ padding: 60, textAlign: 'center' }}>
-          <Bell size={40} color="#1a3a52" style={{ margin: '0 auto 12px' }} />
-          <p style={{ color: '#475569', fontSize: 14 }}>No alerts found. System is monitoring...</p>
+          <Bell size={40} color="var(--border-2)" style={{ margin: '0 auto 12px' }} />
+          <p style={{ color: 'var(--text-3)', fontSize: 14 }}>No alerts found. System is monitoring...</p>
         </div>
       ) : (
         displayed.map((alert, i) => (

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Shield, Eye, EyeOff, AlertTriangle, Zap } from 'lucide-react';
+import { Shield, Eye, EyeOff, Lock, LogIn } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function LoginPage() {
@@ -20,7 +20,6 @@ export default function LoginPage() {
       toast.success('Access granted. Welcome to FundTrace AI.');
       navigate('/dashboard');
     } catch (err) {
-      // err.error comes from server JSON, err.message is axios network error
       const msg = err?.error || err?.message || 'Authentication failed. Check credentials and try again.';
       toast.error(msg);
     } finally {
@@ -28,57 +27,79 @@ export default function LoginPage() {
     }
   };
 
+  const labelStyle = {
+    display: 'block', fontSize: 11, fontWeight: 700,
+    color: 'var(--text-3)', marginBottom: 7,
+    letterSpacing: '0.09em', textTransform: 'uppercase'
+  };
+
   return (
-    <div className="min-h-screen cyber-grid flex items-center justify-center p-4" style={{ background: '#060b14' }}>
-      {/* Animated background orbs */}
+    <div className="min-h-screen cyber-grid flex items-center justify-center p-4">
+
+      {/* Background ambient orbs */}
       <div style={{
-        position: 'fixed', top: '10%', left: '10%', width: 400, height: 400,
-        background: 'radial-gradient(circle, rgba(0,212,255,0.08) 0%, transparent 70%)',
-        borderRadius: '50%', pointerEvents: 'none', animation: 'pulse 4s ease-in-out infinite'
+        position: 'fixed', top: '8%', left: '8%', width: 450, height: 450,
+        background: 'radial-gradient(circle, rgba(26,108,188,0.09) 0%, transparent 70%)',
+        borderRadius: '50%', pointerEvents: 'none', animation: 'pulse 5s ease-in-out infinite'
       }} />
       <div style={{
-        position: 'fixed', bottom: '10%', right: '10%', width: 500, height: 500,
-        background: 'radial-gradient(circle, rgba(124,58,237,0.08) 0%, transparent 70%)',
-        borderRadius: '50%', pointerEvents: 'none', animation: 'pulse 5s ease-in-out infinite reverse'
+        position: 'fixed', bottom: '8%', right: '8%', width: 520, height: 520,
+        background: 'radial-gradient(circle, rgba(201,168,76,0.07) 0%, transparent 70%)',
+        borderRadius: '50%', pointerEvents: 'none', animation: 'pulse 6s ease-in-out infinite reverse'
       }} />
 
       <div className="w-full max-w-md animate-in">
-        {/* Header */}
-        <div className="text-center mb-8">
+
+        {/* Branding */}
+        <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <div style={{
-            width: 64, height: 64, borderRadius: 16, margin: '0 auto 16px',
-            background: 'linear-gradient(135deg, #00d4ff, #7c3aed)',
+            width: 68, height: 68, borderRadius: 18, margin: '0 auto 18px',
+            background: 'linear-gradient(135deg, #1a6cbc 0%, #c9a84c 100%)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: '0 0 40px rgba(0,212,255,0.4)'
+            boxShadow: '0 0 40px rgba(26,108,188,0.4), 0 0 80px rgba(201,168,76,0.15)',
           }}>
-            <Shield size={32} color="#fff" />
+            <Shield size={34} color="#fff" />
           </div>
-          <h1 style={{ fontSize: 28, fontWeight: 800, letterSpacing: '-0.03em', marginBottom: 6 }}>
+          <h1 style={{ fontSize: 30, fontWeight: 800, letterSpacing: '-0.03em', marginBottom: 6 }}>
             <span className="text-gradient-accent">FundTrace AI</span>
           </h1>
-          <p style={{ color: '#475569', fontSize: 14 }}>Intelligent Fund Flow Tracking • Fraud Detection</p>
+          <p style={{ color: 'var(--text-3)', fontSize: 13.5, letterSpacing: '0.01em' }}>
+            Anti-Money Laundering Intelligence Platform
+          </p>
           <div style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10,
-            padding: '4px 12px', borderRadius: 20,
-            background: 'rgba(0,212,255,0.1)', border: '1px solid rgba(0,212,255,0.2)'
+            display: 'inline-flex', alignItems: 'center', gap: 7, marginTop: 12,
+            padding: '5px 14px', borderRadius: 20,
+            background: 'rgba(26,108,188,0.1)', border: '1px solid rgba(26,108,188,0.25)'
           }}>
             <div className="pulse-dot" style={{ width: 6, height: 6 }} />
-            <span style={{ fontSize: 11, color: '#00d4ff', fontWeight: 600 }}>LIVE FRAUD MONITORING</span>
+            <span style={{ fontSize: 10.5, color: 'var(--blue-2)', fontWeight: 700, letterSpacing: '0.1em' }}>
+              LIVE MONITORING ACTIVE
+            </span>
           </div>
         </div>
 
-        {/* Login Form */}
-        <div className="glass-card p-8">
-          <div style={{ marginBottom: 24 }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#e2e8f0', marginBottom: 4 }}>Secure Access</h2>
-            <p style={{ fontSize: 13, color: '#475569' }}>Authorized investigators only</p>
+        {/* Card */}
+        <div className="glass-card cyber-border-animated" style={{ padding: '32px 28px' }}>
+
+          {/* Card header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
+            <div style={{
+              width: 34, height: 34, borderRadius: 8,
+              background: 'rgba(26,108,188,0.12)', border: '1px solid rgba(26,108,188,0.25)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center'
+            }}>
+              <Lock size={16} color="var(--blue-2)" />
+            </div>
+            <div>
+              <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-1)', lineHeight: 1 }}>Secure Sign In</h2>
+              <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 3 }}>Authorized personnel only</p>
+            </div>
           </div>
 
           <form onSubmit={handleSubmit}>
+            {/* Email */}
             <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 6, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-                Email Address
-              </label>
+              <label style={labelStyle}>Email Address</label>
               <input
                 type="email"
                 className="cyber-input"
@@ -89,10 +110,9 @@ export default function LoginPage() {
               />
             </div>
 
+            {/* Password */}
             <div style={{ marginBottom: 24 }}>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 6, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-                Password
-              </label>
+              <label style={labelStyle}>Password</label>
               <div style={{ position: 'relative' }}>
                 <input
                   type={showPass ? 'text' : 'password'}
@@ -108,7 +128,7 @@ export default function LoginPage() {
                   onClick={() => setShowPass(!showPass)}
                   style={{
                     position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
-                    background: 'none', border: 'none', cursor: 'pointer', color: '#475569'
+                    background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-3)'
                   }}
                 >
                   {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -116,39 +136,48 @@ export default function LoginPage() {
               </div>
             </div>
 
+            {/* Submit */}
             <button
               type="submit"
-              className="btn-primary w-full justify-center"
+              className="btn-primary"
               disabled={loading}
-              style={{ width: '100%', justifyContent: 'center', padding: '12px 20px', fontSize: 15 }}
+              style={{ width: '100%', justifyContent: 'center', padding: '12px 20px', fontSize: 14.5, borderRadius: 8 }}
             >
-              {loading ? (
-                <><div className="spinner" style={{ width: 18, height: 18, borderWidth: 2 }} />Authenticating...</>
-              ) : (
-                <><Zap size={16} />Access Intelligence Platform</>
-              )}
+              {loading
+                ? <><div className="spinner" style={{ width: 18, height: 18, borderWidth: 2 }} />Authenticating...</>
+                : <><LogIn size={17} />Access Intelligence Platform</>
+              }
             </button>
           </form>
 
-          <div style={{ marginTop: 20, padding: '12px 14px', borderRadius: 8, background: 'rgba(0,212,255,0.06)', border: '1px solid rgba(0,212,255,0.15)' }}>
-            <p style={{ fontSize: 11, color: '#475569', marginBottom: 4 }}>Demo Credentials</p>
-            <p style={{ fontSize: 12, color: '#00d4ff', fontFamily: 'monospace' }}>admin@fundtrace.ai / FundTrace@2024</p>
+          {/* Demo credentials box */}
+          <div style={{
+            marginTop: 20, padding: '11px 14px', borderRadius: 8,
+            background: 'rgba(201,168,76,0.07)', border: '1px solid rgba(201,168,76,0.25)'
+          }}>
+            <p style={{ fontSize: 10.5, color: 'var(--text-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 5 }}>
+              Demo Credentials
+            </p>
+            <p style={{ fontSize: 12.5, color: 'var(--gold)', fontFamily: 'JetBrains Mono, monospace', fontWeight: 500 }}>
+              admin@fundtrace.ai
+            </p>
+            <p style={{ fontSize: 12.5, color: 'var(--gold-2)', fontFamily: 'JetBrains Mono, monospace', fontWeight: 500 }}>
+              FundTrace@2024
+            </p>
           </div>
 
-          {/* Link to Signup */}
           <div style={{ marginTop: 16, textAlign: 'center' }}>
-            <p style={{ fontSize: 13, color: '#475569' }}>
-              Don't have an account?{' '}
-              <Link to="/signup" style={{ color: '#00d4ff', fontWeight: 600, textDecoration: 'none' }}>
-                Create Account
+            <p style={{ fontSize: 13, color: 'var(--text-3)' }}>
+              New investigator?{' '}
+              <Link to="/signup" style={{ color: 'var(--blue-2)', fontWeight: 600, textDecoration: 'none' }}>
+                Request Access
               </Link>
             </p>
           </div>
         </div>
 
-        {/* Footer */}
-        <p style={{ textAlign: 'center', marginTop: 20, fontSize: 11, color: '#334155' }}>
-          RBI AML Compliance Platform • Version 1.0 • Hackathon Demo
+        <p style={{ textAlign: 'center', marginTop: 20, fontSize: 11, color: 'var(--text-3)' }}>
+          RBI AML Compliance Platform · FundTrace AI · v1.0 · Hackathon Demo
         </p>
       </div>
     </div>

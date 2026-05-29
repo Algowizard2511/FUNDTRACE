@@ -3,18 +3,18 @@ import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
 import {
   LayoutDashboard, Activity, GitBranch, Bell, Search, Shield,
-  Users, LogOut, Wifi, WifiOff, Menu, X, AlertTriangle, Zap, MapPin
+  Users, LogOut, Wifi, WifiOff, Menu, X, MapPin
 } from 'lucide-react';
 import { useState } from 'react';
 
 const navItems = [
-  { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { path: '/transactions', icon: Activity, label: 'Live Transactions' },
-  { path: '/graph', icon: GitBranch, label: 'Fund Flow Graph' },
-  { path: '/alerts', icon: Bell, label: 'Alert Center' },
-  { path: '/investigations', icon: Search, label: 'Investigations' },
-  { path: '/accounts', icon: Users, label: 'Accounts' },
-  { path: '/geomap', icon: MapPin, label: 'Geo Intel Map' },
+  { path: '/dashboard',     icon: LayoutDashboard, label: 'Dashboard' },
+  { path: '/transactions',  icon: Activity,         label: 'Live Transactions' },
+  { path: '/graph',         icon: GitBranch,        label: 'Fund Flow Graph' },
+  { path: '/alerts',        icon: Bell,             label: 'Alert Center' },
+  { path: '/investigations',icon: Search,           label: 'Investigations' },
+  { path: '/accounts',      icon: Users,            label: 'Accounts' },
+  { path: '/geomap',        icon: MapPin,           label: 'Geo Intel Map' },
 ];
 
 export default function Layout() {
@@ -24,37 +24,53 @@ export default function Layout() {
   const openAlerts = liveAlerts.filter(a => a.status === 'OPEN' || !a.status).length;
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: '#060b14' }}>
-      {/* Sidebar */}
+    <div className="flex h-screen overflow-hidden" style={{ background: 'var(--bg)' }}>
+
+      {/* ── Sidebar ── */}
       <aside
         className="flex flex-col transition-all duration-300"
         style={{
           width: sidebarOpen ? '240px' : '64px',
-          background: '#0d1b2a',
-          borderRight: '1px solid #1a3a52',
+          background: 'var(--surface)',
+          borderRight: '1px solid var(--border)',
           flexShrink: 0,
+          position: 'relative',
         }}
       >
         {/* Logo */}
-        <div className="flex items-center gap-3 p-4" style={{ borderBottom: '1px solid #1a3a52', minHeight: '64px' }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px',
+          borderBottom: '1px solid var(--border)', minHeight: 64,
+        }}>
           <div style={{
-            width: 36, height: 36, borderRadius: 8,
-            background: 'linear-gradient(135deg, #00d4ff, #7c3aed)',
+            width: 36, height: 36, borderRadius: 8, flexShrink: 0,
+            background: 'linear-gradient(135deg, #1a6cbc, #c9a84c)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexShrink: 0
+            boxShadow: '0 4px 16px rgba(26,108,188,0.35)',
           }}>
             <Shield size={20} color="#fff" />
           </div>
           {sidebarOpen && (
             <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#e2e8f0', letterSpacing: '-0.02em' }}>FundTrace</div>
-              <div style={{ fontSize: 10, color: '#00d4ff', letterSpacing: '0.1em', fontWeight: 600 }}>AI FRAUD INTEL</div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-1)', letterSpacing: '-0.02em', lineHeight: 1 }}>
+                FundTrace
+              </div>
+              <div style={{ fontSize: 9.5, color: 'var(--gold)', letterSpacing: '0.12em', fontWeight: 700, marginTop: 2 }}>
+                AML INTELLIGENCE
+              </div>
             </div>
           )}
         </div>
 
-        {/* Nav */}
-        <nav className="flex-1 p-3 flex flex-col gap-1">
+        {/* Nav section label */}
+        {sidebarOpen && (
+          <div style={{ padding: '16px 16px 6px', fontSize: 9.5, fontWeight: 700, color: 'var(--text-3)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+            Navigation
+          </div>
+        )}
+
+        {/* Nav links */}
+        <nav style={{ flex: 1, padding: '4px 10px', display: 'flex', flexDirection: 'column', gap: 2 }}>
           {navItems.map(({ path, icon: Icon, label }) => (
             <NavLink
               key={path}
@@ -63,13 +79,14 @@ export default function Layout() {
               title={!sidebarOpen ? label : ''}
             >
               <div style={{ position: 'relative', flexShrink: 0 }}>
-                <Icon size={18} />
+                <Icon size={17} />
                 {path === '/alerts' && openAlerts > 0 && (
                   <span style={{
-                    position: 'absolute', top: -6, right: -6,
-                    background: '#ef4444', borderRadius: '50%',
-                    width: 14, height: 14, fontSize: 9, fontWeight: 700,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff'
+                    position: 'absolute', top: -5, right: -5,
+                    background: 'var(--danger-2)', borderRadius: '50%',
+                    width: 14, height: 14, fontSize: 8.5, fontWeight: 700,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff',
+                    border: '1.5px solid var(--surface)',
                   }}>{Math.min(openAlerts, 9)}</span>
                 )}
               </div>
@@ -78,62 +95,67 @@ export default function Layout() {
           ))}
         </nav>
 
-        {/* User + status */}
-        <div style={{ borderTop: '1px solid #1a3a52', padding: 12 }}>
+        {/* Bottom section — user + status */}
+        <div style={{ borderTop: '1px solid var(--border)', padding: '10px 10px 12px' }}>
+
+          {/* Connection status */}
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10,
-            padding: '8px 10px', borderRadius: 8, background: 'rgba(0,212,255,0.05)'
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '6px 10px', borderRadius: 6, marginBottom: 8,
+            background: connected ? 'rgba(15,122,82,0.08)' : 'rgba(200,40,40,0.08)',
+            border: `1px solid ${connected ? 'rgba(15,122,82,0.2)' : 'rgba(200,40,40,0.2)'}`,
+          }}>
+            {connected
+              ? <><Wifi size={12} color="var(--success-2)" />{sidebarOpen && <span style={{ fontSize: 11, color: 'var(--success-2)', fontWeight: 600 }}>Live Stream Active</span>}</>
+              : <><WifiOff size={12} color="var(--danger-2)" />{sidebarOpen && <span style={{ fontSize: 11, color: 'var(--danger-2)', fontWeight: 600 }}>Disconnected</span>}</>
+            }
+          </div>
+
+          {/* User info */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '8px 10px', borderRadius: 7, marginBottom: 8,
+            background: 'rgba(26,108,188,0.07)', border: '1px solid rgba(26,108,188,0.15)',
           }}>
             <div style={{
-              width: 28, height: 28, borderRadius: '50%',
-              background: 'linear-gradient(135deg, #00d4ff33, #7c3aed33)',
-              border: '1px solid #1a3a52',
+              width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
+              background: 'linear-gradient(135deg, rgba(26,108,188,0.4), rgba(201,168,76,0.3))',
+              border: '1.5px solid rgba(201,168,76,0.4)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 12, fontWeight: 700, color: '#00d4ff', flexShrink: 0
+              fontSize: 12, fontWeight: 700, color: 'var(--gold)',
             }}>
-              {user?.name?.[0] || 'A'}
+              {user?.name?.[0]?.toUpperCase() || 'A'}
             </div>
             {sidebarOpen && (
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.name}</div>
-                <div style={{ fontSize: 10, color: '#475569' }}>{user?.role}</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.name}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-3)', letterSpacing: '0.04em' }}>{user?.role}</div>
               </div>
             )}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', marginBottom: 6 }}>
-            {connected
-              ? <><Wifi size={12} color="#10b981" />{sidebarOpen && <span style={{ fontSize: 11, color: '#10b981' }}>Live Stream Active</span>}</>
-              : <><WifiOff size={12} color="#ef4444" />{sidebarOpen && <span style={{ fontSize: 11, color: '#ef4444' }}>Disconnected</span>}</>
-            }
-          </div>
-
-          <button
-            onClick={logout}
-            className="sidebar-link w-full"
-            style={{ width: '100%', background: 'none', color: '#64748b' }}
-          >
-            <LogOut size={16} />
-            {sidebarOpen && <span>Logout</span>}
+          <button onClick={logout} className="sidebar-link" style={{ width: '100%', color: 'var(--text-3)' }}>
+            <LogOut size={15} />
+            {sidebarOpen && <span>Sign Out</span>}
           </button>
         </div>
 
-        {/* Toggle button */}
+        {/* Collapse toggle */}
         <button
           onClick={() => setSidebarOpen(!sidebarOpen)}
           style={{
-            position: 'absolute', top: 20, left: sidebarOpen ? 220 : 44,
-            width: 24, height: 24, borderRadius: '50%',
-            background: '#1a3a52', border: '1px solid #2a4a62',
+            position: 'absolute', top: 20, left: sidebarOpen ? 222 : 46,
+            width: 22, height: 22, borderRadius: '50%',
+            background: 'var(--card)', border: '1px solid var(--border-2)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'pointer', color: '#64748b', transition: 'left 0.3s', zIndex: 10
+            cursor: 'pointer', color: 'var(--text-3)', transition: 'left 0.3s', zIndex: 10,
           }}
         >
-          {sidebarOpen ? <X size={12} /> : <Menu size={12} />}
+          {sidebarOpen ? <X size={11} /> : <Menu size={11} />}
         </button>
       </aside>
 
-      {/* Main content */}
+      {/* ── Main content ── */}
       <main className="flex-1 overflow-auto cyber-grid">
         <Outlet />
       </main>

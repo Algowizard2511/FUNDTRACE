@@ -2,30 +2,31 @@ import { useEffect, useState, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { txApi } from '../services/api';
 import { useSocket } from '../contexts/SocketContext';
-import { Activity, Filter, Download, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Filter, AlertTriangle, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const FRAUD_TYPE_COLOR = {
-  NONE: '#10b981',
-  STRUCTURING: '#f59e0b',
-  LAYERING: '#ef4444',
-  ROUND_TRIP: '#ef4444',
-  DORMANT_ACTIVATION: '#7c3aed',
-  FAN_OUT: '#f59e0b',
-  MULE: '#ef4444',
-  HIGH_VELOCITY: '#f59e0b',
+  NONE: 'var(--success-2)',
+  STRUCTURING: 'var(--warning-2)',
+  LAYERING: 'var(--danger-2)',
+  ROUND_TRIP: 'var(--danger-2)',
+  DORMANT_ACTIVATION: 'var(--gold)',
+  FAN_OUT: 'var(--warning-2)',
+  MULE: 'var(--danger-2)',
+  HIGH_VELOCITY: 'var(--warning-2)',
 };
 
 const TX_TYPE_COLOR = {
-  UPI: '#00d4ff', NEFT: '#7c3aed', RTGS: '#f59e0b', IMPS: '#10b981', CASH: '#94a3b8', WIRE: '#ef4444'
+  UPI: 'var(--blue-2)', NEFT: 'var(--gold)', RTGS: 'var(--warning-2)', IMPS: 'var(--success-2)', CASH: 'var(--text-3)', WIRE: 'var(--danger-2)'
 };
 
 function TxBadge({ type, label }) {
-  const color = type === 'fraud' ? FRAUD_TYPE_COLOR[label] || '#64748b' : TX_TYPE_COLOR[label] || '#64748b';
+  const color = type === 'fraud' ? FRAUD_TYPE_COLOR[label] || 'var(--text-3)' : TX_TYPE_COLOR[label] || 'var(--text-3)';
   return (
     <span style={{
-      display: 'inline-block', padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
-      background: `${color}18`, color, border: `1px solid ${color}44`, letterSpacing: '0.03em'
+      display: 'inline-block', padding: '3px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+      background: type === 'fraud' && label !== 'NONE' ? `rgba(200,40,40,0.1)` : 'rgba(26,108,188,0.1)',
+      color, border: `1px solid ${color}44`, letterSpacing: '0.04em', textTransform: 'uppercase'
     }}>
       {label?.replace(/_/g, ' ')}
     </span>
@@ -33,13 +34,13 @@ function TxBadge({ type, label }) {
 }
 
 function RiskBar({ score }) {
-  const color = score >= 70 ? '#ef4444' : score >= 40 ? '#f59e0b' : '#10b981';
+  const color = score >= 70 ? 'var(--danger-2)' : score >= 40 ? 'var(--warning-2)' : 'var(--success-2)';
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <div className="risk-bar" style={{ width: 60 }}>
-        <div className="risk-bar-fill" style={{ width: `${score}%`, background: color }} />
+      <div className="risk-bar" style={{ width: 60, height: 5, borderRadius: 2.5, background: 'var(--surface)' }}>
+        <div className="risk-bar-fill" style={{ width: `${score}%`, background: color, borderRadius: 2.5 }} />
       </div>
-      <span style={{ fontSize: 11, color, fontWeight: 600 }}>{score}</span>
+      <span style={{ fontSize: 11, color, fontWeight: 700 }}>{score}</span>
     </div>
   );
 }
@@ -72,10 +73,10 @@ export default function TransactionsPage() {
       if (latest.anomaly_flag) {
         toast.custom(() => (
           <div className="toast-fraud">
-            <AlertTriangle size={18} color="#ef4444" />
+            <AlertTriangle size={18} color="var(--danger-2)" />
             <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>Transaction Flagged</div>
-              <div style={{ fontSize: 11, color: '#94a3b8' }}>{latest.fraud_type?.replace(/_/g,' ')} • ₹{Number(latest.amount).toLocaleString('en-IN', {maximumFractionDigits:0})}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-1)' }}>Transaction Flagged</div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-2)' }}>{latest.fraud_type?.replace(/_/g,' ')} • ₹{Number(latest.amount).toLocaleString('en-IN', {maximumFractionDigits:0})}</div>
             </div>
           </div>
         ), { duration: 5000 });
@@ -91,16 +92,16 @@ export default function TransactionsPage() {
 
   return (
     <div style={{ padding: 24 }}>
-      {/* Header */}
+      {/* ── Header ── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: '#e2e8f0' }}>Live Transaction Monitor</h1>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-1)' }}>Live Transaction Monitor</h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
-            <div className="pulse-dot" style={{ width: 6, height: 6, background: connected ? '#10b981' : '#ef4444' }} />
-            <span style={{ fontSize: 12, color: connected ? '#10b981' : '#ef4444' }}>
+            <div className="pulse-dot" style={{ width: 6, height: 6, background: connected ? 'var(--success-2)' : 'var(--danger-2)' }} />
+            <span style={{ fontSize: 12, color: connected ? 'var(--success-2)' : 'var(--danger-2)', fontWeight: 600 }}>
               {connected ? 'Real-time stream active' : 'Connecting...'}
             </span>
-            <span style={{ fontSize: 12, color: '#475569' }}>• {displayed.length} transactions</span>
+            <span style={{ fontSize: 12, color: 'var(--text-3)' }}>• {displayed.length} transactions</span>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
@@ -110,15 +111,15 @@ export default function TransactionsPage() {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="glass-card p-4 mb-4" style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-        <Filter size={14} color="#475569" />
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: '#94a3b8' }}>
+      {/* ── Filters ── */}
+      <div className="glass-card" style={{ padding: '14px 18px', marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <Filter size={15} color="var(--text-3)" />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-2)', fontWeight: 500 }}>
           <input
             type="checkbox"
             checked={filter.flagged}
             onChange={e => setFilter(f => ({ ...f, flagged: e.target.checked }))}
-            style={{ accentColor: '#ef4444' }}
+            style={{ accentColor: 'var(--danger-2)' }}
           />
           Flagged Only
         </label>
@@ -138,17 +139,17 @@ export default function TransactionsPage() {
           <option value="NONE">Clean</option>
         </select>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <span style={{ fontSize: 12, color: '#ef4444', padding: '4px 10px', borderRadius: 6, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
+          <span style={{ fontSize: 11.5, color: 'var(--danger-2)', fontWeight: 700, padding: '4px 10px', borderRadius: 6, background: 'rgba(200,40,40,0.1)', border: '1px solid rgba(200,40,40,0.25)' }}>
             {displayed.filter(t => t.anomaly_flag).length} Flagged
           </span>
         </div>
       </div>
 
-      {/* Table */}
-      <div className="glass-card" style={{ overflow: 'hidden' }}>
+      {/* ── Table ── */}
+      <div className="glass-card card-gold-top" style={{ overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto', maxHeight: 'calc(100vh - 280px)', overflowY: 'auto' }} ref={tableRef}>
           <table className="cyber-table">
-            <thead style={{ position: 'sticky', top: 0, background: '#0d1b2a', zIndex: 5 }}>
+            <thead style={{ position: 'sticky', top: 0, background: 'var(--surface)', zIndex: 5 }}>
               <tr>
                 <th>Transaction ID</th>
                 <th>Sender</th>
@@ -167,19 +168,22 @@ export default function TransactionsPage() {
                   <div className="spinner" style={{ margin: '0 auto' }} />
                 </td></tr>
               ) : displayed.length === 0 ? (
-                <tr><td colSpan={9} style={{ textAlign: 'center', padding: 40, color: '#475569' }}>
+                <tr><td colSpan={9} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>
                   No transactions yet. Simulator starting...
                 </td></tr>
               ) : displayed.map((tx, i) => (
                 <tr
                   key={tx.tx_id || i}
                   className={tx.anomaly_flag ? 'flagged' : ''}
-                  style={{ animation: newIds.has(tx.tx_id) ? 'slideInRow 0.5s ease-out' : undefined }}
+                  style={{
+                    animation: newIds.has(tx.tx_id) ? 'slideInRow 0.5s ease-out' : undefined,
+                    borderLeft: tx.anomaly_flag ? '3px solid var(--danger-2)' : '3px solid transparent'
+                  }}
                 >
-                  <td style={{ fontFamily: 'monospace', fontSize: 11, color: '#00d4ff' }}>{tx.tx_id?.slice(0, 16)}</td>
-                  <td style={{ fontFamily: 'monospace', fontSize: 11 }}>{tx.sender}</td>
-                  <td style={{ fontFamily: 'monospace', fontSize: 11 }}>{tx.receiver}</td>
-                  <td style={{ fontWeight: 600, color: '#e2e8f0' }}>
+                  <td style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 11, color: 'var(--blue-2)' }}>{tx.tx_id?.slice(0, 16)}</td>
+                  <td style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 11, color: 'var(--text-2)' }}>{tx.sender}</td>
+                  <td style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 11, color: 'var(--text-2)' }}>{tx.receiver}</td>
+                  <td style={{ fontWeight: 700, color: 'var(--text-1)' }}>
                     ₹{Number(tx.amount).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                   </td>
                   <td><TxBadge label={tx.transaction_type} /></td>
@@ -193,7 +197,7 @@ export default function TransactionsPage() {
                       : <span className="badge badge-success">CLEAN</span>
                     }
                   </td>
-                  <td style={{ color: '#475569', fontSize: 11 }}>
+                  <td style={{ color: 'var(--text-3)', fontSize: 11 }}>
                     {tx.timestamp ? new Date(tx.timestamp).toLocaleTimeString('en-IN') : '-'}
                   </td>
                 </tr>
