@@ -144,6 +144,7 @@ body {
   position: absolute;
   inset: 0;
   border-radius: inherit;
+  pointer-events: none;
   padding: 1px;
   background: linear-gradient(135deg, var(--blue), var(--gold), var(--blue));
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);

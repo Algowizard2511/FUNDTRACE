@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Shield, Eye, EyeOff, Lock, LogIn } from 'lucide-react';
+import { Shield, Eye, EyeOff, Lock, LogIn, UserPlus } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function LoginPage() {
@@ -168,11 +168,23 @@ export default function LoginPage() {
 
           <div style={{ marginTop: 16, textAlign: 'center' }}>
             <p style={{ fontSize: 13, color: 'var(--text-3)' }}>
-              New investigator?{' '}
-              <Link to="/signup" style={{ color: 'var(--blue-2)', fontWeight: 600, textDecoration: 'none' }}>
-                Request Access
-              </Link>
+              New investigator?
             </p>
+            <Link
+              to="/signup"
+              className="btn-primary"
+              style={{
+                marginTop: 10,
+                width: '100%',
+                justifyContent: 'center',
+                textDecoration: 'none',
+                padding: '11px 16px',
+                borderRadius: 8,
+              }}
+            >
+              <UserPlus size={16} />
+              Request Access
+            </Link>
           </div>
         </div>
 
