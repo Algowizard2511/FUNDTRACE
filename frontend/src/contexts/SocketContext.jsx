@@ -36,6 +36,10 @@ export function SocketProvider({ children }) {
       listenersRef.current['new_alert']?.forEach(fn => fn(alert));
     });
 
+    s.on('account_created', (account) => {
+      listenersRef.current['account_created']?.forEach(fn => fn(account));
+    });
+
     setSocket(s);
     return () => s.disconnect();
   }, []);

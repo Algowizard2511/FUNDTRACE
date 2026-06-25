@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
 import {
   LayoutDashboard, Activity, GitBranch, Bell, Search, Shield,
-  Users, LogOut, Wifi, WifiOff, Menu, X, MapPin
+  Users, LogOut, Wifi, WifiOff, Menu, X, MapPin, Beaker
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -15,6 +15,7 @@ const navItems = [
   { path: '/investigations',icon: Search,           label: 'Investigations' },
   { path: '/accounts',      icon: Users,            label: 'Accounts' },
   { path: '/geomap',        icon: MapPin,           label: 'Geo Intel Map' },
+  { path: '/simulation',    icon: Beaker,           label: 'Simulation Studio', accent: true },
 ];
 
 export default function Layout() {
@@ -71,12 +72,13 @@ export default function Layout() {
 
         {/* Nav links */}
         <nav style={{ flex: 1, padding: '4px 10px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {navItems.map(({ path, icon: Icon, label }) => (
+          {navItems.map(({ path, icon: Icon, label, accent }) => (
             <NavLink
               key={path}
               to={path}
               className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
               title={!sidebarOpen ? label : ''}
+              style={accent ? { color: 'var(--gold)', borderTop: '1px solid rgba(201,168,76,0.15)', marginTop: 6, paddingTop: 8 } : {}}
             >
               <div style={{ position: 'relative', flexShrink: 0 }}>
                 <Icon size={17} />

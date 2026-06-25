@@ -73,4 +73,12 @@ export const investigationApi = {
   generateSTR: (caseId) => api.post(`/investigations/${caseId}/str`),
 };
 
+// Simulator Studio
+export const simulatorApi = {
+  getAccounts: () => api.get('/simulator/accounts'),
+  createAccount: (data) => api.post('/simulator/account', data),
+  submitTransaction: (data) => api.post('/simulator/transaction', data),
+  runScenario: (type) => api.post(`/simulator/scenario/${type}`),
+};
+
 export default api;

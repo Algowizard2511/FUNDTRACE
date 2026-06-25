@@ -26,9 +26,9 @@ const FRAUD_TYPE_LABELS = {
 
 const SEVERITY_COLOR = {
   CRITICAL: '#e03434',
-  HIGH:     '#e09a28',
-  MEDIUM:   '#2d85d8',
-  LOW:      '#16a870',
+  HIGH: '#e09a28',
+  MEDIUM: '#2d85d8',
+  LOW: '#16a870',
 };
 
 function StatCard({ label, value, icon: Icon, color, subLabel, change }) {
@@ -172,11 +172,11 @@ export default function DashboardPage() {
 
       {/* ── Stat Cards ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14, marginBottom: 22 }}>
-        <StatCard label="Total Transactions" value={((stats.tx?.total || 0) + liveTransactions.length).toLocaleString()} icon={Activity}       color="#2d85d8" subLabel={`+${stats.tx?.today || 0} today`} change={12} />
-        <StatCard label="Flagged Transactions" value={stats.tx?.flagged || 0}                                                icon={AlertTriangle}  color="#e03434" subLabel="Requires investigation" change={8} />
-        <StatCard label="Open Alerts"           value={stats.alerts?.open || 0}                                             icon={Zap}            color="#c98520" subLabel={`${stats.alerts?.critical || 0} critical`} />
-        <StatCard label="Flagged Accounts"      value={stats.accounts?.flagged || 0}                                        icon={Users}          color="#c9a84c" subLabel="Under monitoring" />
-        <StatCard label="Active Cases"          value={stats.cases?.open || 0}                                              icon={Shield}         color="#16a870" subLabel="Investigations open" />
+        <StatCard label="Total Transactions" value={((stats.tx?.total || 0) + liveTransactions.length).toLocaleString()} icon={Activity} color="#2d85d8" subLabel={`+${stats.tx?.today || 0} today`} change={12} />
+        <StatCard label="Flagged Transactions" value={stats.tx?.flagged || 0} icon={AlertTriangle} color="#e03434" subLabel="Requires investigation" change={8} />
+        <StatCard label="Open Alerts" value={stats.alerts?.open || 0} icon={Zap} color="#c98520" subLabel={`${stats.alerts?.critical || 0} critical`} />
+        <StatCard label="Flagged Accounts" value={stats.accounts?.flagged || 0} icon={Users} color="#c9a84c" subLabel="Under monitoring" />
+        <StatCard label="Active Cases" value={stats.cases?.open || 0} icon={Shield} color="#16a870" subLabel="Investigations open" />
       </div>
 
       {/* ── Charts row ── */}
@@ -193,10 +193,10 @@ export default function DashboardPage() {
           </div>
           <div style={{ height: 200 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={txByHour.length ? txByHour : Array.from({length:12},(_,i)=>({hour:`${i*2}:00`,count:0}))}>
+              <AreaChart data={txByHour.length ? txByHour : Array.from({ length: 12 }, (_, i) => ({ hour: `${i * 2}:00`, count: 0 }))}>
                 <defs>
                   <linearGradient id="txGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%"  stopColor="#1a6cbc" stopOpacity={0.35} />
+                    <stop offset="5%" stopColor="#1a6cbc" stopOpacity={0.35} />
                     <stop offset="95%" stopColor="#1a6cbc" stopOpacity={0} />
                   </linearGradient>
                 </defs>
@@ -221,13 +221,13 @@ export default function DashboardPage() {
               <PieChart>
                 <Pie
                   data={fraudPieData.length ? fraudPieData : [
-                    {name:'Layering',value:35},{name:'Structuring',value:25},
-                    {name:'Fan-Out',value:20},{name:'Dormant',value:12},{name:'Mule',value:8}
+                    { name: 'Layering', value: 35 }, { name: 'Structuring', value: 25 },
+                    { name: 'Fan-Out', value: 20 }, { name: 'Dormant', value: 12 }, { name: 'Mule', value: 8 }
                   ]}
                   cx="50%" cy="50%" innerRadius={44} outerRadius={68}
                   dataKey="value" paddingAngle={3}
                 >
-                  {(fraudPieData.length ? fraudPieData : [{},{},{},{},{}]).map((_, i) => (
+                  {(fraudPieData.length ? fraudPieData : [{}, {}, {}, {}, {}]).map((_, i) => (
                     <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
                   ))}
                 </Pie>
@@ -236,7 +236,7 @@ export default function DashboardPage() {
             </ResponsiveContainer>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
-            {['Layering','Structuring','Fan-Out','Dormant','Mule'].map((label, i) => (
+            {['Layering', 'Structuring', 'Fan-Out', 'Dormant', 'Mule'].map((label, i) => (
               <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, color: 'var(--text-3)' }}>
                 <div style={{ width: 8, height: 8, borderRadius: 2, background: PIE_COLORS[i] }} />
                 {label}

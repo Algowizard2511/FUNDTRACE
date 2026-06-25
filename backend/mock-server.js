@@ -562,6 +562,199 @@ app.post('/api/investigations/:case_id/str', (req, res) => {
   res.json({ message: 'STR report generated', case: inv });
 });
 
+/****************************************
+ * MANUAL SIMULATION STUDIO APIs
+ ****************************************/
+
+// GET /api/simulator/accounts — all accounts for dropdown selectors
+app.get('/api/simulator/accounts', (req, res) => {
+  const accounts = db.accounts.map(a => ({
+    account_id: a.account_id,
+    customer_name: a.customer_name,
+    account_type: a.account_type,
+    status: a.status,
+    balance: a.balance,
+    kyc_level: a.kyc_level,
+    risk_score: a.risk_score,
+    is_flagged: a.is_flagged,
+    geo_location: a.geo_location,
+  }));
+  res.json({ accounts, total: accounts.length });
+});
+
+// POST /api/simulator/account — create a new account manually
+app.post('/api/simulator/account', (req, res) => {
+  const { customer_name, account_type = 'SAVINGS', status = 'ACTIVE', opening_balance = 10000, kyc_level = 'MEDIUM', city = 'Mumbai' } = req.body;
+  if (!customer_name) return res.status(400).json({ error: 'customer_name is required' });
+
+  const idx = db.accounts.length;
+  const cityData = CITIES.find(c => c.city === city) || CITIES[0];
+  const account = {
+    _id: `acc-manual-${uuidv4().slice(0,8)}`,
+    account_id: `ACC${String(idx + 1).padStart(6, '0')}`,
+    customer_name,
+    kyc_level,
+    branch: faker.helpers.arrayElement(BRANCHES),
+    status,
+    account_type,
+    balance: Number(opening_balance),
+    last_active: status === 'DORMANT' ? faker.date.past({ years: 1 }) : new Date(),
+    geo_location: { city: cityData.city, state: cityData.state, lat: cityData.lat, lng: cityData.lng },
+    risk_score: account_type === 'SAVINGS' ? 5 : account_type === 'MULE' ? 55 : 45,
+    is_flagged: false,
+    total_incoming: 0,
+    total_outgoing: 0,
+    tx_count: 0,
+    manual: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+  db.accounts.push(account);
+  io.emit('account_created', account);
+  console.log(`🏦 [Studio] Account created: ${account.account_id} — ${customer_name}`);
+  res.status(201).json(account);
+});
+
+// POST /api/simulator/transaction — manually submit a transaction through the full pipeline
+app.post('/api/simulator/transaction', (req, res) => {
+  const { sender, receiver, amount, transaction_type = 'UPI', channel = 'MOBILE' } = req.body;
+
+  if (!sender || !receiver || !amount) {
+    return res.status(400).json({ error: 'sender, receiver, and amount are required' });
+  }
+
+  const senderAcc = db.accounts.find(a => a.account_id === sender);
+  const receiverAcc = db.accounts.find(a => a.account_id === receiver);
+
+  if (!senderAcc) return res.status(404).json({ error: `Sender account ${sender} not found` });
+  if (!receiverAcc) return res.status(404).json({ error: `Receiver account ${receiver} not found` });
+  if (sender === receiver) return res.status(400).json({ error: 'Sender and receiver cannot be the same account' });
+  if (senderAcc.balance < Number(amount)) {
+    return res.status(400).json({ error: `Insufficient balance: ₹${senderAcc.balance.toLocaleString()} available, ₹${Number(amount).toLocaleString()} requested` });
+  }
+
+  const city = senderAcc.geo_location || faker.helpers.arrayElement(CITIES);
+  const isFraud = Number(amount) >= 43000;
+
+  const tx = makeTx(sender, receiver, Number(amount), transaction_type, isFraud);
+  tx.channel = channel;
+  tx.geo_origin = city;
+  tx.manual = true; // tag as manually submitted
+
+  // Route through the SAME emitTransaction() pipeline
+  const result = emitTransaction(tx);
+
+  console.log(`💳 [Studio] Manual transaction: ${sender} → ${receiver} ₹${Number(amount).toLocaleString()} [${result.anomaly_flag ? '🚨 FLAGGED' : '✅ CLEAN'}]`);
+  res.status(201).json(result);
+});
+
+// POST /api/simulator/scenario/layering
+app.post('/api/simulator/scenario/layering', async (req, res) => {
+  const shells = getShell();
+  const normals = getNormal();
+  const pool = shells.length >= 4 ? shells : [...shells, ...normals];
+  if (pool.length < 4) return res.status(400).json({ error: 'Not enough accounts for layering (need 4+ shell/normal accounts)' });
+
+  const chain = faker.helpers.arrayElements(pool, Math.min(5, pool.length));
+  let amount = faker.number.float({ min: 200000, max: 800000, fractionDigits: 0 });
+  const txIds = [];
+
+  for (let i = 0; i < chain.length - 1; i++) {
+    amount = Math.floor(amount * 0.85);
+    const tx = makeTx(chain[i].account_id, chain[i + 1].account_id, amount, 'WIRE', true);
+    tx.manual = true;
+    const result = emitTransaction(tx);
+    txIds.push(result.tx_id);
+    await new Promise(r => setTimeout(r, 300));
+  }
+  console.log(`🚨 [Studio] Layering scenario: ${chain.length - 1} hops`);
+  res.json({ scenario: 'LAYERING', hops: chain.length - 1, tx_ids: txIds, accounts: chain.map(a => a.account_id) });
+});
+
+// POST /api/simulator/scenario/structuring
+app.post('/api/simulator/scenario/structuring', async (req, res) => {
+  const shells = getShell();
+  const normals = getNormal();
+  if (!shells.length && !normals.length) return res.status(400).json({ error: 'No accounts available' });
+
+  const sender = shells.length ? faker.helpers.arrayElement(shells) : faker.helpers.arrayElement(normals);
+  const targets = faker.helpers.arrayElements(normals.filter(a => a.account_id !== sender.account_id), Math.min(4, normals.length));
+  if (!targets.length) return res.status(400).json({ error: 'Not enough receiver accounts' });
+
+  const txIds = [];
+  for (const t of targets) {
+    const amt = faker.number.float({ min: 43000, max: 49800, fractionDigits: 0 });
+    const tx = makeTx(sender.account_id, t.account_id, amt, 'NEFT', true);
+    tx.manual = true;
+    const result = emitTransaction(tx);
+    txIds.push(result.tx_id);
+    await new Promise(r => setTimeout(r, 300));
+  }
+  console.log(`🚨 [Studio] Structuring scenario: ${targets.length} transactions from ${sender.account_id}`);
+  res.json({ scenario: 'STRUCTURING', sender: sender.account_id, count: targets.length, tx_ids: txIds });
+});
+
+// POST /api/simulator/scenario/fanout
+app.post('/api/simulator/scenario/fanout', async (req, res) => {
+  const shells = getShell();
+  const normals = getNormal();
+  if (!normals.length) return res.status(400).json({ error: 'No normal accounts available for receivers' });
+
+  const sender = shells.length ? faker.helpers.arrayElement(shells) : faker.helpers.arrayElement(normals);
+  const targets = faker.helpers.arrayElements(normals.filter(a => a.account_id !== sender.account_id), Math.min(8, normals.length));
+  if (targets.length < 2) return res.status(400).json({ error: 'Not enough receiver accounts' });
+
+  const total = faker.number.float({ min: 500000, max: 1500000, fractionDigits: 0 });
+  const txIds = [];
+  for (const t of targets) {
+    const tx = makeTx(sender.account_id, t.account_id, Math.floor(total / targets.length), 'IMPS', true);
+    tx.manual = true;
+    const result = emitTransaction(tx);
+    txIds.push(result.tx_id);
+    await new Promise(r => setTimeout(r, 200));
+  }
+  console.log(`🚨 [Studio] Fan-out scenario: ${sender.account_id} → ${targets.length} accounts`);
+  res.json({ scenario: 'FAN_OUT', sender: sender.account_id, receivers: targets.length, tx_ids: txIds, total_amount: total });
+});
+
+// POST /api/simulator/scenario/dormant
+app.post('/api/simulator/scenario/dormant', async (req, res) => {
+  replenishDormant();
+  const dormant = getDormant();
+  const shells = getShell();
+  const normals = getNormal();
+
+  if (!dormant.length) return res.status(400).json({ error: 'No dormant accounts available' });
+  const sender = shells.length ? faker.helpers.arrayElement(shells) : faker.helpers.arrayElement(normals);
+  if (!sender) return res.status(400).json({ error: 'No sender accounts available' });
+
+  const d = faker.helpers.arrayElement(dormant);
+  const amount = faker.number.float({ min: 100000, max: 500000, fractionDigits: 0 });
+  const tx = makeTx(sender.account_id, d.account_id, amount, 'NEFT', true);
+  tx.manual = true;
+  const result = emitTransaction(tx);
+
+  console.log(`🚨 [Studio] Dormant activation: ${d.account_id} received ₹${amount.toLocaleString()}`);
+  res.json({ scenario: 'DORMANT_ACTIVATION', sender: sender.account_id, dormant_account: d.account_id, amount, tx_id: result.tx_id, flagged: result.anomaly_flag });
+});
+
+// POST /api/simulator/scenario/mule
+app.post('/api/simulator/scenario/mule', async (req, res) => {
+  const mules = getMule();
+  const normals = getNormal();
+
+  if (!mules.length) return res.status(400).json({ error: 'No mule accounts available' });
+  const sender = normals.length ? faker.helpers.arrayElement(normals) : faker.helpers.arrayElement(db.accounts);
+  const mule = faker.helpers.arrayElement(mules);
+  const amount = faker.number.float({ min: 100000, max: 400000, fractionDigits: 0 });
+  const tx = makeTx(sender.account_id, mule.account_id, amount, 'IMPS', true);
+  tx.manual = true;
+  const result = emitTransaction(tx);
+
+  console.log(`🚨 [Studio] Mule transfer: ${sender.account_id} → ${mule.account_id} ₹${amount.toLocaleString()}`);
+  res.json({ scenario: 'MULE_TRANSFER', sender: sender.account_id, mule_account: mule.account_id, amount, tx_id: result.tx_id, flagged: result.anomaly_flag });
+});
+
 // HEALTH
 app.get('/health', (req, res) => {
   res.json({ status: 'operational', mode: 'in-memory-demo', accounts: db.accounts.length, transactions: db.transactions.length, alerts: db.alerts.length });
