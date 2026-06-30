@@ -38,7 +38,32 @@ const HOP_WINDOW_MS = 24 * 60 * 60 * 1000; // look 24h back for chains
  * @param {Object[]} allAlerts    - all alerts (in-memory) — used for mule scoring
  * @returns {{ riskContribution, flags, reasons, features }}
  */
+/**
+ * @param {Object}   tx           - current transaction (the entry point)
+ * @param {Object[]} allTx        - all transactions (in-memory)
+ * @param {Object[]} allAccounts  - all accounts (in-memory)
+ * @param {Object[]} allAlerts    - all alerts (in-memory) — used for mule scoring
+ * @returns {{ riskContribution, flags, reasons, features }}
+ */
 function checkLayering(tx, allTx, allAccounts, allAlerts = []) {
+  const configService = require('../config/riskWeights');
+  const CONFIG = configService.get();
+  const { RULE_STATES, MODIFIERS, BEHAVIOUR } = CONFIG;
+
+  if (RULE_STATES && RULE_STATES.LAYERING === false) {
+    return {
+      ruleName: 'LAYERING',
+      riskContribution: 0,
+      flags: [],
+      reasons: [],
+      features: { layering_risk_score: 0 },
+      trace: { ruleName: 'LAYERING', enabled: false, score: 0, checks: [] }
+    };
+  }
+
+  const MAX_DEPTH    = 5;
+  const HOP_WINDOW_MS = 24 * 60 * 60 * 1000; // look 24h back for chains
+
   const flags   = [];
   const reasons = [];
   let contribution = 0;
@@ -47,9 +72,6 @@ function checkLayering(tx, allTx, allAccounts, allAlerts = []) {
   for (const acc of allAccounts) accountMap[acc.account_id] = acc;
 
   // ── BFS over transaction graph ───────────────────────────────────────────────
-  // We model the graph as: nodes = accounts, directed edges = transactions
-  // We want to trace from tx.sender forward through receivers
-
   const visited   = new Set();
   const chain     = []; // array of { from, to, tx, depth }
   const queue     = [{ account: tx.sender, depth: 0, prevTx: null }];
@@ -77,13 +99,8 @@ function checkLayering(tx, allTx, allAccounts, allAlerts = []) {
     if (depth > MAX_DEPTH) continue;
 
     if (visited.has(account)) {
-      // Only flag a TRUE cycle: path must return specifically to the original
-      // sender AND have traversed at least 2 hops (A→B→A is trivial/noise).
-      // This prevents false positives in dense graphs where unrelated paths
-      // happen to share a node.
       if (account === tx.sender && depth >= 2 && !circularDetected) {
         circularDetected = true;
-        // Don't push the flag yet — wait until after the hop-count guard below.
       }
       continue;
     }
@@ -98,9 +115,19 @@ function checkLayering(tx, allTx, allAccounts, allAlerts = []) {
     }
   }
 
-  if (maxDepth < BEHAVIOUR.LAYERING_MIN_HOPS) {
-    // Not enough hops to be layering — return clean (also suppresses any
-    // shallow circular hit that slipped through at depth < MIN_HOPS)
+  const hasHops = maxDepth >= BEHAVIOUR.LAYERING_MIN_HOPS;
+
+  const traceChecks = [
+    {
+      name: 'Layering Chain Length Check',
+      description: `Detects if funds are routed through multiple intermediate accounts (min hops: ${BEHAVIOUR.LAYERING_MIN_HOPS})`,
+      matched: hasHops,
+      scoreEffect: 0, // baseline structuring matching trigger
+      details: `Found chain depth of ${maxDepth} hops (Chain: ${[...visited].join(' → ')}).`
+    }
+  ];
+
+  if (!hasHops) {
     return {
       ruleName: 'LAYERING',
       riskContribution: 0,
@@ -115,10 +142,17 @@ function checkLayering(tx, allTx, allAccounts, allAlerts = []) {
         shell_hop_count: 0,
         geo_crossing_count: 0,
       },
+      trace: {
+        ruleName: 'LAYERING',
+        enabled: true,
+        score: 0,
+        maxPossibleScore: CONFIG.LAYERING_MAX,
+        checks: traceChecks
+      }
     };
   }
 
-  // Now safe to commit the circular flag (we're past the hop-count gate)
+  // commit the circular flag
   if (circularDetected) {
     contribution += MODIFIERS.CIRCULAR_DETECTED;
     flags.push('CIRCULAR_TRANSACTION');
@@ -128,13 +162,23 @@ function checkLayering(tx, allTx, allAccounts, allAlerts = []) {
     );
   }
 
-  // ── At this point we have a chain of >= MIN_HOPS ─────────────────────────────
+  traceChecks.push({
+    name: 'Circular Transaction Cycle',
+    description: 'Traces if funds loop back to the sender (e.g., A → B → C → A)',
+    matched: circularDetected,
+    scoreEffect: circularDetected ? MODIFIERS.CIRCULAR_DETECTED : 0,
+    details: circularDetected ? `Cycle detected at depth ${maxDepth}.` : 'No circular loop detected.'
+  });
 
   // Analyse hop timing
   const hopTimes = [];
   const preservationRatios = [];
   let shellHops = 0;
   let geoCrossings = 0;
+  let fastHopsMatched = false;
+  let highPreservationMatched = false;
+  let shellHopsMatched = false;
+  let geoCrossingMatched = false;
 
   for (let i = 1; i < chain.length; i++) {
     const hop = chain[i];
@@ -146,6 +190,7 @@ function checkLayering(tx, allTx, allAccounts, allAlerts = []) {
       if (timeDiffSec > 0) hopTimes.push(timeDiffSec);
 
       if (timeDiffSec < BEHAVIOUR.LAYERING_HOP_TIME_SUSPICIOUS_SEC) {
+        fastHopsMatched = true;
         contribution += MODIFIERS.FAST_HOP_TIME;
         flags.push('FAST_HOP_TIME');
         reasons.push(
@@ -160,6 +205,7 @@ function checkLayering(tx, allTx, allAccounts, allAlerts = []) {
       const ratio = hop.tx.amount / prevHop.tx.amount;
       if (ratio <= 1) preservationRatios.push(ratio);
       if (ratio >= BEHAVIOUR.LAYERING_PRESERVATION_RATIO) {
+        highPreservationMatched = true;
         contribution += MODIFIERS.HIGH_PRESERVATION;
         flags.push('HIGH_PRESERVATION');
         reasons.push(
@@ -170,20 +216,16 @@ function checkLayering(tx, allTx, allAccounts, allAlerts = []) {
       }
     }
 
-    // Shell/Mule account hops — check both static account_type AND computed mule probability
+    // Shell/Mule account hops
     const fromAcc = accountMap[hop.from];
     const hopMuleScore = computeMuleScore(hop.from, allTx, allAccounts, allAlerts);
 
     const isStaticMule = fromAcc && ['SHELL', 'MULE'].includes(fromAcc.account_type);
-    const isBehaviouralMule = hopMuleScore >= 25; // MULE_SCORE_MEDIUM threshold
+    const isBehaviouralMule = hopMuleScore >= 25;
 
     if (isStaticMule || isBehaviouralMule) {
       shellHops++;
-
-      // Amplify based on mule probability band:
-      //   Static mule type only           → base SHELL_ACCOUNT_HOP weight
-      //   Behavioural score 25–54 (MEDIUM) → base + 5 (confirmed pattern)
-      //   Behavioural score 55+ (HIGH)     → base + 12 (strong amplification)
+      shellHopsMatched = true;
       let hopRisk = MODIFIERS.SHELL_ACCOUNT_HOP;
       if (hopMuleScore >= 55) {
         hopRisk += 12;
@@ -214,6 +256,7 @@ function checkLayering(tx, allTx, allAccounts, allAlerts = []) {
     const currGeo = hop.tx?.geo_origin;
     if (prevGeo && currGeo && prevGeo.state && currGeo.state && prevGeo.state !== currGeo.state) {
       geoCrossings++;
+      geoCrossingMatched = true;
       contribution += MODIFIERS.GEO_CROSSING;
       flags.push('GEO_CROSSING');
       reasons.push(
@@ -238,10 +281,11 @@ function checkLayering(tx, allTx, allAccounts, allAlerts = []) {
     ? preservationRatios.reduce((s, v) => s + v, 0) / preservationRatios.length
     : 0;
 
-  // Compute mule score for the final destination of the layering chain
+  // Compute mule score for final destination
   const chainDestination = chain.length > 0 ? chain[chain.length - 1].to : tx.receiver;
   const destinationMuleScore = computeMuleScore(chainDestination, allTx, allAccounts, allAlerts);
-  if (destinationMuleScore >= 55) {
+  const destinationIsMuleMatched = destinationMuleScore >= 55;
+  if (destinationIsMuleMatched) {
     contribution += 10;
     flags.push('LAYERING_DESTINATION_IS_MULE');
     reasons.push(
@@ -250,8 +294,57 @@ function checkLayering(tx, allTx, allAccounts, allAlerts = []) {
     );
   }
 
+  traceChecks.push(
+    {
+      name: 'Rapid Hops Detection',
+      description: `Detects extremely quick movements between chain accounts (Threshold: < ${BEHAVIOUR.LAYERING_HOP_TIME_SUSPICIOUS_SEC}s)`,
+      matched: fastHopsMatched,
+      scoreEffect: fastHopsMatched ? MODIFIERS.FAST_HOP_TIME : 0,
+      details: `Average hop time observed: ${avgHopTime.toFixed(1)} seconds.`
+    },
+    {
+      name: 'High Fund Preservation Ratio',
+      description: `Flagged if accounts pass on almost all incoming funds (Preservation threshold: >= ${BEHAVIOUR.LAYERING_PRESERVATION_RATIO * 100}%)`,
+      matched: highPreservationMatched,
+      scoreEffect: highPreservationMatched ? MODIFIERS.HIGH_PRESERVATION : 0,
+      details: `Average preservation ratio: ${(avgPreservation * 100).toFixed(1)}%.`
+    },
+    {
+      name: 'Shell/Mule Hop Verification',
+      description: 'Checks if intermediate accounts in the path are classified as Shell, Mule, or show high mule scores',
+      matched: shellHopsMatched,
+      scoreEffect: shellHopsMatched ? (MODIFIERS.SHELL_ACCOUNT_HOP * shellHops) : 0,
+      details: `Encountered ${shellHops} suspicious/mule intermediate nodes during traversal.`
+    },
+    {
+      name: 'Geographic Boundary Crossings',
+      description: 'Identifies if the funds hop rapidly across different geographic states/jurisdictions',
+      matched: geoCrossingMatched,
+      scoreEffect: geoCrossingMatched ? MODIFIERS.GEO_CROSSING : 0,
+      details: `Crossed state lines ${geoCrossings} times within the chain.`
+    },
+    {
+      name: 'Mule Destination Termination',
+      description: 'Traces if the layering chain ends with a high-probability money mule recipient',
+      matched: destinationIsMuleMatched,
+      scoreEffect: destinationIsMuleMatched ? 10 : 0,
+      details: `Chain terminal node: ${chainDestination} has a mule score of ${destinationMuleScore}/95.`
+    }
+  );
+
+  const finalContribution = Math.min(CONFIG.LAYERING_MAX, Math.max(0, contribution));
+
+  const trace = {
+    ruleName: 'LAYERING',
+    enabled: true,
+    score: finalContribution,
+    rawScore: contribution,
+    maxPossibleScore: CONFIG.LAYERING_MAX,
+    checks: traceChecks
+  };
+
   const features = {
-    layering_risk_score:          contribution,
+    layering_risk_score:          finalContribution,
     hop_count:                    maxDepth,
     circular_detected:            flags.includes('CIRCULAR_TRANSACTION') ? 1 : 0,
     avg_hop_time_seconds:         parseFloat(avgHopTime.toFixed(1)),
@@ -266,11 +359,14 @@ function checkLayering(tx, allTx, allAccounts, allAlerts = []) {
 
   return {
     ruleName: 'LAYERING',
-    riskContribution: contribution,
+    riskContribution: finalContribution,
     flags: [...new Set(flags)],
     reasons,
     features,
+    trace,
   };
 }
+
+module.exports = { checkLayering };
 
 module.exports = { checkLayering };

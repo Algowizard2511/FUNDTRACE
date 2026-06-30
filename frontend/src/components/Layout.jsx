@@ -15,6 +15,7 @@ const navItems = [
   { path: '/investigations',icon: Search,           label: 'Investigations' },
   { path: '/accounts',      icon: Users,            label: 'Accounts' },
   { path: '/geomap',        icon: MapPin,           label: 'Geo Intel Map' },
+  { path: '/rules',         icon: Shield,           label: 'AML Rule Engine' },
   { path: '/simulation',    icon: Beaker,           label: 'Simulation Studio', accent: true },
 ];
 

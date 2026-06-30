@@ -51,8 +51,8 @@ const CITIES = [
 const BRANCHES = ['SBI Main', 'HDFC Andheri', 'ICICI Kurla', 'Axis Bandra', 'PNB CP', 'Canara MG Road'];
 
 function seedAccounts() {
-  // 70 normal
-  for (let i = 0; i < 70; i++) {
+  // 7000 normal
+  for (let i = 0; i < 7000; i++) {
     const city = faker.helpers.arrayElement(CITIES);
     db.accounts.push({
       _id: `acc-${i}`, account_id: `ACC${String(i + 1).padStart(6, '0')}`,
@@ -65,8 +65,8 @@ function seedAccounts() {
       createdAt: new Date(), updatedAt: new Date()
     });
   }
-  // 10 dormant
-  for (let i = 70; i < 80; i++) {
+  // 1000 dormant
+  for (let i = 7000; i < 8000; i++) {
     const city = faker.helpers.arrayElement(CITIES);
     db.accounts.push({
       _id: `acc-${i}`, account_id: `ACC${String(i + 1).padStart(6, '0')}`,
@@ -79,14 +79,14 @@ function seedAccounts() {
       createdAt: new Date(), updatedAt: new Date()
     });
   }
-  // 20 shell/mule
-  for (let i = 80; i < 100; i++) {
+  // 2000 shell/mule
+  for (let i = 8000; i < 10000; i++) {
     const city = faker.helpers.arrayElement(CITIES);
     db.accounts.push({
       _id: `acc-${i}`, account_id: `ACC${String(i + 1).padStart(6, '0')}`,
       customer_name: faker.company.name() + ' Ltd', kyc_level: 'LOW',
       branch: faker.helpers.arrayElement(BRANCHES), status: 'ACTIVE',
-      account_type: i < 90 ? 'SHELL' : 'MULE',
+      account_type: i < 9000 ? 'SHELL' : 'MULE',
       balance: faker.number.float({ min: 0, max: 500, fractionDigits: 0 }),
       last_active: faker.date.recent({ days: 7 }), geo_location: city,
       risk_score: faker.number.int({ min: 40, max: 65 }), is_flagged: false,
@@ -254,6 +254,66 @@ function startSimulator() {
 }
 
 // ==================== REST API ====================
+
+// RULES CONFIG
+app.get('/api/rules/config', (req, res) => {
+  const riskWeights = require('./fraud_engine/config/riskWeights');
+  res.json(riskWeights.get());
+});
+
+app.patch('/api/rules/config', (req, res) => {
+  try {
+    const riskWeights = require('./fraud_engine/config/riskWeights');
+    riskWeights.update(req.body);
+    res.json({ message: 'Configuration updated successfully', config: riskWeights.get() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// RULE DRY RUN TESTER
+app.post('/api/rules/dry-run', async (req, res) => {
+  try {
+    const { sender, receiver, amount, transaction_type = 'UPI', channel = 'MOBILE', city = 'Mumbai' } = req.body;
+    
+    if (!sender || !receiver || !amount) {
+      return res.status(400).json({ error: 'sender, receiver, and amount are required' });
+    }
+
+    const tx = {
+      tx_id: `DRY-${uuidv4().slice(0, 8).toUpperCase()}`,
+      sender,
+      receiver,
+      amount: Number(amount),
+      timestamp: new Date(),
+      transaction_type,
+      channel,
+      geo_origin: { city, state: 'Maharashtra', lat: 19.076, lng: 72.877 },
+      description: 'Dry Run Transaction Test'
+    };
+
+    const { runFraudEngine } = require('./fraud_engine/ruleEngine');
+    const result = await runFraudEngine(tx, {
+      allTx: db.transactions || [],
+      allAccounts: db.accounts || [],
+      allAlerts: db.alerts || []
+    });
+
+    res.json({
+      transaction: tx,
+      result: {
+        finalScore: result.finalScore,
+        riskLevel: result.riskLevel,
+        action: result.action,
+        allFlags: result.allFlags,
+        explanation: result.explanation,
+        traces: result.traces
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // AUTH
 app.post('/api/auth/login', async (req, res) => {

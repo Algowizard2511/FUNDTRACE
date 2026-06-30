@@ -112,6 +112,10 @@ const { checkMuleRisk } = require('./rules/muleRiskRule');          // Rule 6 �
 async function runFraudEngine(tx, context = {}) {
   const { allTx = [], allAccounts = [], allAlerts = [], io = null } = context;
 
+  const configService = require('./config/riskWeights');
+  const CONFIG = configService.get();
+  const { RULE_STATES } = CONFIG;
+
   try {
     // ── 1. Lookup accounts ──────────────────────────────────────────────────
     const senderAccount = allAccounts.find(a => a.account_id === tx.sender) || null;
@@ -146,14 +150,18 @@ async function runFraudEngine(tx, context = {}) {
     const muleRiskResult = checkMuleRisk(tx, allTx, allAccounts, allAlerts, baseline);
 
     // ── 6. Receiver Reputation as a Rule Result ─────────────────────────────
+    const receiverRiskEnabled = RULE_STATES.RECEIVER_RISK !== false;
+    const receiverRiskContribution = receiverRiskEnabled ? (
+      receiverRep.score >= 80 ? 15 :
+        receiverRep.score >= 60 ? 8 :
+          receiverRep.score >= 40 ? 3 : -5
+    ) : 0;
+
     const receiverRiskResult = {
       ruleName: 'RECEIVER_RISK',
-      riskContribution:
-        receiverRep.score >= 80 ? 15 :
-          receiverRep.score >= 60 ? 8 :
-            receiverRep.score >= 40 ? 3 : -5,
-      flags: receiverRep.flags,
-      reasons: receiverRep.flags.length > 0
+      riskContribution: receiverRiskContribution,
+      flags: receiverRiskEnabled ? receiverRep.flags : [],
+      reasons: receiverRiskEnabled && receiverRep.flags.length > 0
         ? [`Receiver ${tx.receiver} reputation score: ${receiverRep.score}/100 (${receiverRep.label}). ` +
           `Flags: ${receiverRep.flags.join(', ')}.`]
         : [],
@@ -164,14 +172,32 @@ async function runFraudEngine(tx, context = {}) {
         receiver_is_flagged: receiverRep.flags.includes('RECEIVER_PREVIOUSLY_FLAGGED') ? 1 : 0,
         receiver_kyc_low: receiverRep.flags.includes('RECEIVER_LOW_KYC') ? 1 : 0,
       },
+      trace: {
+        ruleName: 'RECEIVER_RISK',
+        enabled: receiverRiskEnabled,
+        score: receiverRiskContribution,
+        maxPossibleScore: CONFIG.RECEIVER_RISK_MAX,
+        checks: [
+          {
+            name: 'Receiver Reputation Score',
+            description: 'Analyzes history and KYC level of the receiving account',
+            matched: receiverRep.score >= 40,
+            scoreEffect: receiverRiskContribution,
+            details: `Reputation score: ${receiverRep.score}/100 (${receiverRep.label}). Flags: ${receiverRep.flags.join(', ') || 'None'}`
+          }
+        ]
+      }
     };
 
     // ── 7. Geo as a Rule Result ─────────────────────────────────────────────
+    const geoRiskEnabled = RULE_STATES.GEO_RISK !== false;
+    const geoRiskContribution = geoRiskEnabled ? geoResult.riskContribution : 0;
+
     const geoRuleResult = {
       ruleName: 'GEO_RISK',
-      riskContribution: geoResult.riskContribution,
-      flags: geoResult.flags,
-      reasons: geoResult.reasons,
+      riskContribution: geoRiskContribution,
+      flags: geoRiskEnabled ? geoResult.flags : [],
+      reasons: geoRiskEnabled ? geoResult.reasons : [],
       features: {
         geo_risk_score: geoResult.riskContribution,
         is_sanctioned_country: geoResult.flags.includes('SANCTIONED_COUNTRY') ? 1 : 0,
@@ -179,6 +205,21 @@ async function runFraudEngine(tx, context = {}) {
         is_new_city: geoResult.flags.includes('NEW_CITY_FIRST_TIME') ? 1 : 0,
         impossible_travel: geoResult.flags.includes('IMPOSSIBLE_TRAVEL') ? 1 : 0,
       },
+      trace: {
+        ruleName: 'GEO_RISK',
+        enabled: geoRiskEnabled,
+        score: geoRiskContribution,
+        maxPossibleScore: CONFIG.GEO_RISK_MAX,
+        checks: [
+          {
+            name: 'Geographic Anomaly Check',
+            description: 'Identifies geographical risk patterns, sanctioned nations, and impossible speed-of-travel anomalies',
+            matched: geoRiskContribution > 0,
+            scoreEffect: geoRiskContribution,
+            details: geoResult.reasons.join(', ') || 'No geographical risk flagged.'
+          }
+        ]
+      }
     };
 
     // ── 8. Aggregate via Global Scorer ──────────────────────────────────────
@@ -194,6 +235,7 @@ async function runFraudEngine(tx, context = {}) {
     ];
 
     const aggregated = aggregate(allRuleResults);
+    aggregated.traces = allRuleResults.map(r => r.trace).filter(Boolean);
 
     // Enrich ML features with sender/receiver profile data
     aggregated.mlFeatures = {

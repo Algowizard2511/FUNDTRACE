@@ -82,4 +82,11 @@ export const simulatorApi = {
   runScenario: (type) => api.post(`/simulator/scenario/${type}`),
 };
 
+// AML Rules & Dynamic Tuning API
+export const rulesApi = {
+  getConfig: () => api.get('/rules/config'),
+  updateConfig: (data) => api.patch('/rules/config', data),
+  dryRun: (data) => api.post('/rules/dry-run', data),
+};
+
 export default api;

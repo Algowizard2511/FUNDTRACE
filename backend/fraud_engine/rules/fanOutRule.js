@@ -26,6 +26,21 @@ const TRUSTED_PATTERNS = ['employer', 'gov', 'govt', 'lic', 'nsdl', 'epfo', 'mun
  * @returns {{ riskContribution, flags, reasons, features }}
  */
 function checkFanOut(tx, allTx, allAccounts, baseline) {
+  const configService = require('../config/riskWeights');
+  const CONFIG = configService.get();
+  const { RULE_STATES, MODIFIERS, BEHAVIOUR } = CONFIG;
+
+  if (RULE_STATES && RULE_STATES.FAN_OUT === false) {
+    return {
+      ruleName: 'FAN_OUT',
+      riskContribution: 0,
+      flags: [],
+      reasons: [],
+      features: { fan_out_risk_score: 0 },
+      trace: { ruleName: 'FAN_OUT', enabled: false, score: 0, checks: [] }
+    };
+  }
+
   const flags   = [];
   const reasons = [];
   let contribution = 0;
@@ -41,9 +56,19 @@ function checkFanOut(tx, allTx, allAccounts, baseline) {
   const allWindowTxs = [...windowTxs, tx];
 
   const uniqueReceivers = [...new Set(allWindowTxs.map(t => t.receiver))];
+  const meetsMinReceivers = uniqueReceivers.length >= BEHAVIOUR.FAN_OUT_MIN_RECEIVERS;
 
-  if (uniqueReceivers.length < BEHAVIOUR.FAN_OUT_MIN_RECEIVERS) {
-    // Not a fan-out situation
+  const traceChecks = [
+    {
+      name: 'Minimum Receiver Count Threshold',
+      description: `Verifies if the sender distributed funds to a minimum number of unique accounts (threshold: >= ${BEHAVIOUR.FAN_OUT_MIN_RECEIVERS})`,
+      matched: meetsMinReceivers,
+      scoreEffect: 0,
+      details: `Found ${uniqueReceivers.length} unique receivers within a ${BEHAVIOUR.FAN_OUT_WINDOW_MS / 60000} min window.`
+    }
+  ];
+
+  if (!meetsMinReceivers) {
     return {
       ruleName: 'FAN_OUT',
       riskContribution: 0,
@@ -57,6 +82,13 @@ function checkFanOut(tx, allTx, allAccounts, baseline) {
         equal_distribution_score: 0,
         receiver_diversity_score: 0,
       },
+      trace: {
+        ruleName: 'FAN_OUT',
+        enabled: true,
+        score: 0,
+        maxPossibleScore: CONFIG.FAN_OUT_MAX,
+        checks: traceChecks
+      }
     };
   }
 
@@ -82,8 +114,9 @@ function checkFanOut(tx, allTx, allAccounts, baseline) {
   // ── New Beneficiaries ────────────────────────────────────────────────────────
   const newReceivers = uniqueReceivers.filter(r => !baseline.knownBeneficiaries.has(r));
   const newReceiverRatio = uniqueReceivers.length > 0 ? newReceivers.length / uniqueReceivers.length : 0;
+  const newReceiversMatched = newReceiverRatio >= BEHAVIOUR.FAN_OUT_NEW_BENEFICIARY_RATIO;
 
-  if (newReceiverRatio >= BEHAVIOUR.FAN_OUT_NEW_BENEFICIARY_RATIO) {
+  if (newReceiversMatched) {
     contribution += MODIFIERS.UNKNOWN_RECEIVERS;
     flags.push('UNKNOWN_RECEIVERS');
     reasons.push(
@@ -96,8 +129,9 @@ function checkFanOut(tx, allTx, allAccounts, baseline) {
   const amounts = allWindowTxs.map(t => t.amount);
   const cv = coefficientOfVariation(amounts);
   let equalDistScore = 0;
+  const equalDistMatched = cv < BEHAVIOUR.FAN_OUT_EQUAL_DISTRIBUTION_CV && amounts.length >= 5;
 
-  if (cv < BEHAVIOUR.FAN_OUT_EQUAL_DISTRIBUTION_CV && amounts.length >= 5) {
+  if (equalDistMatched) {
     equalDistScore = 1;
     contribution += MODIFIERS.EQUAL_DISTRIBUTION;
     flags.push('EQUAL_DISTRIBUTION');
@@ -119,8 +153,9 @@ function checkFanOut(tx, allTx, allAccounts, baseline) {
   }
 
   const diversityScore = receiverStates.size / Math.max(uniqueReceivers.length, 1);
-  if (receiverStates.size >= 4) {
-    contribution += 3; // small nudge only — geo diversity across India is normal
+  const geoDiversityMatched = receiverStates.size >= 4;
+  if (geoDiversityMatched) {
+    contribution += 3;
     flags.push('RECEIVER_GEO_DIVERSITY');
     reasons.push(
       `Receivers span ${receiverStates.size} different states / ${receiverCities.size} cities ` +
@@ -129,7 +164,6 @@ function checkFanOut(tx, allTx, allAccounts, baseline) {
   }
 
   // ── Fan-Out → Fan-In Reconvergence ──────────────────────────────────────────
-  // Check if the receivers from the fan-out subsequently all converge to a single account
   const downstreamReceiverIds = [];
   for (const receiverId of uniqueReceivers) {
     const downstreamTxs = allTx.filter(
@@ -142,12 +176,16 @@ function checkFanOut(tx, allTx, allAccounts, baseline) {
     }
   }
 
+  let reconvergenceMatched = false;
+  let reconvergenceTarget = '';
   if (downstreamReceiverIds.length >= 3) {
     const freqMap = {};
     for (const id of downstreamReceiverIds) freqMap[id] = (freqMap[id] || 0) + 1;
     const topConvergence = Object.entries(freqMap).sort((a, b) => b[1] - a[1])[0];
 
     if (topConvergence && topConvergence[1] >= Math.ceil(uniqueReceivers.length * 0.5)) {
+      reconvergenceMatched = true;
+      reconvergenceTarget = topConvergence[0];
       contribution += MODIFIERS.RECONVERGENCE;
       flags.push('FAN_OUT_FAN_IN_DETECTED');
       reasons.push(
@@ -158,13 +196,15 @@ function checkFanOut(tx, allTx, allAccounts, baseline) {
   }
 
   // ── False Positive Reducers ──────────────────────────────────────────────────
-  if (trustedCount / uniqueReceivers.length > 0.70) {
+  const mostlyTrustedMatched = (trustedCount / uniqueReceivers.length) > 0.70;
+  if (mostlyTrustedMatched) {
     contribution += MODIFIERS.HISTORICAL_RECEIVER;
     flags.push('MOSTLY_TRUSTED_RECEIVERS');
     reasons.push(`Majority of receivers (${trustedCount}) are known historical beneficiaries. Risk reduced.`);
   }
 
-  if (suspiciousCount > 0) {
+  const suspiciousReceiversMatched = suspiciousCount > 0;
+  if (suspiciousReceiversMatched) {
     contribution += Math.min(10, suspiciousCount * 5);
     flags.push('SUSPICIOUS_RECEIVERS_IN_FAN_OUT');
     reasons.push(`${suspiciousCount} receivers in the fan-out are flagged/SHELL/MULE type accounts.`);
@@ -175,8 +215,64 @@ function checkFanOut(tx, allTx, allAccounts, baseline) {
     `${uniqueReceivers.length} unique receivers within 30 minutes.`
   );
 
+  traceChecks.push(
+    {
+      name: 'New / Unknown Receivers',
+      description: `Identifies if the distribution target accounts are new to this sender (threshold: >= ${BEHAVIOUR.FAN_OUT_NEW_BENEFICIARY_RATIO * 100}%)`,
+      matched: newReceiversMatched,
+      scoreEffect: newReceiversMatched ? MODIFIERS.UNKNOWN_RECEIVERS : 0,
+      details: `${newReceivers.length} first-time receivers out of ${uniqueReceivers.length}.`
+    },
+    {
+      name: 'Equal Distribution Splits',
+      description: 'Checks if transactions distribute almost equal amounts to different receivers (highly automated pattern)',
+      matched: equalDistMatched,
+      scoreEffect: equalDistMatched ? MODIFIERS.EQUAL_DISTRIBUTION : 0,
+      details: `Coefficient of Variation: ${(cv * 100).toFixed(2)}% (threshold: < ${BEHAVIOUR.FAN_OUT_EQUAL_DISTRIBUTION_CV * 100}%).`
+    },
+    {
+      name: 'Receiver Geographic Diversity Check',
+      description: 'Reviews state/city dispersion of receivers',
+      matched: geoDiversityMatched,
+      scoreEffect: geoDiversityMatched ? 3 : 0,
+      details: `Receivers located across ${receiverStates.size} states.`
+    },
+    {
+      name: 'Fan-Out Fan-In Reconvergence',
+      description: 'Traces downstream transactions to detect if dispersed funds aggregate back to a single node',
+      matched: reconvergenceMatched,
+      scoreEffect: reconvergenceMatched ? MODIFIERS.RECONVERGENCE : 0,
+      details: reconvergenceMatched ? `Funds gathered back to ${reconvergenceTarget} within 2 hours.` : 'No reconvergence detected.'
+    },
+    {
+      name: 'Mostly Trusted Receivers Mitigator',
+      description: 'Reduces risk score if the majority of receivers are historical trusted targets',
+      matched: mostlyTrustedMatched,
+      scoreEffect: mostlyTrustedMatched ? MODIFIERS.HISTORICAL_RECEIVER : 0,
+      details: `${trustedCount} trusted receivers detected.`
+    },
+    {
+      name: 'Flagged Receiver Penalty',
+      description: 'Increases risk if any receiver is a known Shell/Mule or previously flagged account',
+      matched: suspiciousReceiversMatched,
+      scoreEffect: suspiciousReceiversMatched ? Math.min(10, suspiciousCount * 5) : 0,
+      details: `Flagged/Shell receivers found: ${suspiciousCount}.`
+    }
+  );
+
+  const finalContribution = Math.min(CONFIG.FAN_OUT_MAX, Math.max(0, contribution));
+
+  const trace = {
+    ruleName: 'FAN_OUT',
+    enabled: true,
+    score: finalContribution,
+    rawScore: contribution,
+    maxPossibleScore: CONFIG.FAN_OUT_MAX,
+    checks: traceChecks
+  };
+
   const features = {
-    fan_out_risk_score:       contribution,
+    fan_out_risk_score:       finalContribution,
     unique_receiver_count:    uniqueReceivers.length,
     new_receiver_count:       newReceivers.length,
     new_receiver_ratio:       parseFloat(newReceiverRatio.toFixed(3)),
@@ -190,10 +286,11 @@ function checkFanOut(tx, allTx, allAccounts, baseline) {
 
   return {
     ruleName: 'FAN_OUT',
-    riskContribution: contribution,
+    riskContribution: finalContribution,
     flags: [...new Set(flags)],
     reasons,
     features,
+    trace,
   };
 }
 

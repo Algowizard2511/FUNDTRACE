@@ -40,35 +40,8 @@
 const { BEHAVIOUR } = require('../config/riskWeights');
 
 // ── Tuneable Thresholds ───────────────────────────────────────────────────────
-const MULE = {
-  // Unrelated sender detection
-  MIN_UNIQUE_SENDERS:          5,     // ≥5 distinct senders in the look-back window = mule signal
-  LOOK_BACK_WINDOW_MS:        24 * 60 * 60 * 1000,  // 24-hour rolling window
-
-  // Pass-through detection
-  FORWARD_RATIO_SUSPICIOUS:    0.85,  // ≥85% of received amount forwarded out = pass-through
-  FORWARD_WINDOW_MS:          60 * 60 * 1000,        // within 60 min of receipt
-
-  // Low-balance threshold
-  LOW_BALANCE_THRESHOLD_INR:   500,   // account balance ≤ ₹500
-
-  // First-time sender ratio
-  FIRST_TIME_SENDER_RATIO:     0.70,  // ≥70% senders are first-timers for this receiver
-
-  // Mule risk score bands (before capping)
-  MULE_SCORE_MEDIUM:           25,    // ≥25 points → MULE_RISK_MEDIUM flag
-  MULE_SCORE_HIGH:             55,    // ≥55 points → MULE_RISK_HIGH flag
-
-  // Score contributions (matching table in docblock)
-  SCORE_MANY_UNRELATED_SENDERS: 20,
-  SCORE_PASS_THROUGH:           20,
-  SCORE_LOW_BALANCE:            10,
-  SCORE_FIRST_TIME_SENDERS:     15,
-  SCORE_PRIOR_ALERTS:           20,
-  SCORE_LOW_KYC:                10,
-
-  MAX_CONTRIBUTION:            95,    // hard cap so mule rule alone can't auto-trigger CRITICAL
-};
+// ── Tuneable Thresholds ───────────────────────────────────────────────────────
+// MULE thresholds are now resolved dynamically from the config service.
 
 /**
  * checkMuleRisk
@@ -81,6 +54,21 @@ const MULE = {
  * @returns {{ ruleName, riskContribution, flags, reasons, features }}
  */
 function checkMuleRisk(tx, allTx, allAccounts, allAlerts, baseline) {
+  const configService = require('../config/riskWeights');
+  const CONFIG = configService.get();
+  const { RULE_STATES, MULE } = CONFIG;
+
+  if (RULE_STATES && RULE_STATES.MULE_RISK === false) {
+    return {
+      ruleName: 'MULE_RISK',
+      riskContribution: 0,
+      flags: [],
+      reasons: [],
+      features: { mule_risk_score: 0 },
+      trace: { ruleName: 'MULE_RISK', enabled: false, score: 0, checks: [] }
+    };
+  }
+
   const flags   = [];
   const reasons = [];
   let muleScore = 0;
@@ -105,14 +93,13 @@ function checkMuleRisk(tx, allTx, allAccounts, allAlerts, baseline) {
     t => t.sender === potentialMuleId
   );
 
-  // ── SIGNAL 1: Receives money from many unrelated people (+20) ───────────────
+  // ── SIGNAL 1: Receives money from many unrelated people ──────────────────────
   const uniqueInboundSenders = new Set(allInbound.map(t => t.sender));
-  // Remove self-to-self
   uniqueInboundSenders.delete(potentialMuleId);
-
   const inboundSenderCount = uniqueInboundSenders.size;
+  const signalManySenders = inboundSenderCount >= MULE.MIN_UNIQUE_SENDERS;
 
-  if (inboundSenderCount >= MULE.MIN_UNIQUE_SENDERS) {
+  if (signalManySenders) {
     muleScore += MULE.SCORE_MANY_UNRELATED_SENDERS;
     flags.push('MULE_MANY_UNRELATED_SENDERS');
     reasons.push(
@@ -121,13 +108,11 @@ function checkMuleRisk(tx, allTx, allAccounts, allAlerts, baseline) {
     );
   }
 
-  // ── SIGNAL 2: Forwards almost all money within minutes (+20) ────────────────
+  // ── SIGNAL 2: Forwards almost all money within minutes ───────────────────────
   const totalReceived  = allInbound.reduce((s, t) => s + (t.amount || 0), 0);
 
-  // Outbound within FORWARD_WINDOW_MS of any inbound receipt
   const rapidForwards  = outboundTxs.filter(t => {
     const outTime = new Date(t.timestamp).getTime();
-    // Is there an inbound tx that preceded this outbound by ≤ FORWARD_WINDOW_MS?
     return allInbound.some(inTx => {
       const inTime = new Date(inTx.timestamp).getTime();
       return outTime >= inTime && (outTime - inTime) <= MULE.FORWARD_WINDOW_MS;
@@ -136,8 +121,9 @@ function checkMuleRisk(tx, allTx, allAccounts, allAlerts, baseline) {
 
   const totalRapidlySent = rapidForwards.reduce((s, t) => s + (t.amount || 0), 0);
   const forwardRatio     = totalReceived > 0 ? totalRapidlySent / totalReceived : 0;
+  const signalPassThrough = forwardRatio >= MULE.FORWARD_RATIO_SUSPICIOUS;
 
-  if (forwardRatio >= MULE.FORWARD_RATIO_SUSPICIOUS) {
+  if (signalPassThrough) {
     muleScore += MULE.SCORE_PASS_THROUGH;
     flags.push('MULE_PASS_THROUGH');
     reasons.push(
@@ -147,10 +133,11 @@ function checkMuleRisk(tx, allTx, allAccounts, allAlerts, baseline) {
     );
   }
 
-  // ── SIGNAL 3: Maintains very low balance (+10) ───────────────────────────
+  // ── SIGNAL 3: Maintains very low balance ──────────────────────────────────
   const currentBalance = muleAccount?.balance ?? muleAccount?.current_balance ?? null;
+  const signalLowBalance = currentBalance !== null && currentBalance <= MULE.LOW_BALANCE_THRESHOLD_INR;
 
-  if (currentBalance !== null && currentBalance <= MULE.LOW_BALANCE_THRESHOLD_INR) {
+  if (signalLowBalance) {
     muleScore += MULE.SCORE_LOW_BALANCE;
     flags.push('MULE_LOW_BALANCE');
     reasons.push(
@@ -159,20 +146,20 @@ function checkMuleRisk(tx, allTx, allAccounts, allAlerts, baseline) {
     );
   }
 
-  // ── SIGNAL 4: Many first-time / one-time senders (+15) ──────────────────────
-  // A sender who has only ever sent to this receiver once (in all history) = first-time sender
+  // ── SIGNAL 4: Many first-time / one-time senders ─────────────────────────────
   const firstTimeSenders = [...uniqueInboundSenders].filter(senderId => {
     const totalSentToMule = allTx.filter(
       t => t.sender === senderId && t.receiver === potentialMuleId
     ).length;
-    return totalSentToMule <= 1; // only ever sent once (just this window)
+    return totalSentToMule <= 1;
   });
 
   const firstTimeSenderRatio = inboundSenderCount > 0
     ? firstTimeSenders.length / inboundSenderCount
     : 0;
+  const signalFirstTimeSenders = inboundSenderCount > 0 && firstTimeSenderRatio >= MULE.FIRST_TIME_SENDER_RATIO;
 
-  if (inboundSenderCount > 0 && firstTimeSenderRatio >= MULE.FIRST_TIME_SENDER_RATIO) {
+  if (signalFirstTimeSenders) {
     muleScore += MULE.SCORE_FIRST_TIME_SENDERS;
     flags.push('MULE_FIRST_TIME_SENDERS');
     reasons.push(
@@ -182,15 +169,16 @@ function checkMuleRisk(tx, allTx, allAccounts, allAlerts, baseline) {
     );
   }
 
-  // ── SIGNAL 5: Already involved in previous alerts (+20) ─────────────────────
+  // ── SIGNAL 5: Already involved in previous alerts ────────────────────────────
   const priorAlerts = allAlerts.filter(
     a => a.account_references?.includes(potentialMuleId) ||
          a.tx_references?.some(txId =>
            allTx.find(t => t.tx_id === txId && (t.sender === potentialMuleId || t.receiver === potentialMuleId))
          )
   );
+  const signalPriorAlerts = priorAlerts.length > 0;
 
-  if (priorAlerts.length > 0) {
+  if (signalPriorAlerts) {
     muleScore += MULE.SCORE_PRIOR_ALERTS;
     flags.push('MULE_PRIOR_ALERT_HISTORY');
     reasons.push(
@@ -200,10 +188,11 @@ function checkMuleRisk(tx, allTx, allAccounts, allAlerts, baseline) {
     );
   }
 
-  // ── SIGNAL 6: Low KYC verification (+10) ────────────────────────────────────
+  // ── SIGNAL 6: Low KYC verification ─────────────────────────────────────────
   const kycLevel = muleAccount?.kyc_level || null;
+  const signalLowKyc = kycLevel === 'LOW' || kycLevel === null;
 
-  if (kycLevel === 'LOW' || kycLevel === null) {
+  if (signalLowKyc) {
     muleScore += MULE.SCORE_LOW_KYC;
     flags.push('MULE_LOW_KYC');
     reasons.push(
@@ -219,58 +208,94 @@ function checkMuleRisk(tx, allTx, allAccounts, allAlerts, baseline) {
     flags.push('MULE_RISK_MEDIUM');
   }
 
-  // ── If no signals fired, return clean result ─────────────────────────────────
-  if (flags.length === 0) {
-    return {
-      ruleName: 'MULE_RISK',
-      riskContribution: 0,
-      flags: [],
-      reasons: [],
-      features: {
-        mule_risk_score:             0,
-        unique_inbound_sender_count: inboundSenderCount,
-        rapid_forward_ratio:         parseFloat(forwardRatio.toFixed(3)),
-        current_balance:             currentBalance ?? -1,
-        first_time_sender_ratio:     parseFloat(firstTimeSenderRatio.toFixed(3)),
-        prior_alert_count:           0,
-        kyc_level_numeric:           kycLevel === 'HIGH' ? 2 : kycLevel === 'MEDIUM' ? 1 : 0,
-        signals_fired:               0,
-      },
-    };
-  }
-
-  // ── Cap contribution ─────────────────────────────────────────────────────────
   const finalContribution = Math.min(muleScore, MULE.MAX_CONTRIBUTION);
 
   const signalsFired = [
-    flags.includes('MULE_MANY_UNRELATED_SENDERS'),
-    flags.includes('MULE_PASS_THROUGH'),
-    flags.includes('MULE_LOW_BALANCE'),
-    flags.includes('MULE_FIRST_TIME_SENDERS'),
-    flags.includes('MULE_PRIOR_ALERT_HISTORY'),
-    flags.includes('MULE_LOW_KYC'),
+    signalManySenders,
+    signalPassThrough,
+    signalLowBalance,
+    signalFirstTimeSenders,
+    signalPriorAlerts,
+    signalLowKyc,
   ].filter(Boolean).length;
 
-  reasons.unshift(
-    `Mule Risk Score: ${muleScore}/95 — ${signalsFired} of 6 behavioral signal(s) triggered ` +
-    `for account ${potentialMuleId}.`
-  );
+  if (flags.length > 0) {
+    reasons.unshift(
+      `Mule Risk Score: ${muleScore}/95 — ${signalsFired} of 6 behavioral signal(s) triggered ` +
+      `for account ${potentialMuleId}.`
+    );
+  }
+
+  const trace = {
+    ruleName: 'MULE_RISK',
+    enabled: true,
+    score: finalContribution,
+    rawScore: muleScore,
+    maxPossibleScore: MULE.MAX_CONTRIBUTION,
+    checks: [
+      {
+        name: 'Inbound Aggregation (Many senders)',
+        description: `Triggered if unique sender count >= ${MULE.MIN_UNIQUE_SENDERS} within 24h`,
+        matched: signalManySenders,
+        scoreEffect: signalManySenders ? MULE.SCORE_MANY_UNRELATED_SENDERS : 0,
+        details: `Found ${inboundSenderCount} distinct senders (threshold: >= ${MULE.MIN_UNIQUE_SENDERS}).`
+      },
+      {
+        name: 'Outbound Velocity Pass-Through',
+        description: `Triggered if outbound transfer ratio >= ${MULE.FORWARD_RATIO_SUSPICIOUS * 100}% within ${MULE.FORWARD_WINDOW_MS / 60000} mins`,
+        matched: signalPassThrough,
+        scoreEffect: signalPassThrough ? MULE.SCORE_PASS_THROUGH : 0,
+        details: `Forwarded ${Math.round(forwardRatio * 100)}% of funds (₹${Math.round(totalRapidlySent).toLocaleString()} / ₹${Math.round(totalReceived).toLocaleString()}).`
+      },
+      {
+        name: 'Low Balance Retention',
+        description: `Checks if residual balance is <= ₹${MULE.LOW_BALANCE_THRESHOLD_INR} INR`,
+        matched: signalLowBalance,
+        scoreEffect: signalLowBalance ? MULE.SCORE_LOW_BALANCE : 0,
+        details: `Current account balance: ₹${currentBalance?.toLocaleString() || 'N/A'}.`
+      },
+      {
+        name: 'One-Time Senders Pattern',
+        description: `Checks if first-time senders ratio >= ${MULE.FIRST_TIME_SENDER_RATIO * 100}%`,
+        matched: signalFirstTimeSenders,
+        scoreEffect: signalFirstTimeSenders ? MULE.SCORE_FIRST_TIME_SENDERS : 0,
+        details: `Ratio: ${Math.round(firstTimeSenderRatio * 100)}% (${firstTimeSenders.length} of ${inboundSenderCount}).`
+      },
+      {
+        name: 'Alert History Cross-Check',
+        description: 'Traces if the recipient account was flagged in past AML investigations',
+        matched: signalPriorAlerts,
+        scoreEffect: signalPriorAlerts ? MULE.SCORE_PRIOR_ALERTS : 0,
+        details: `Involved in ${priorAlerts.length} past incident reports.`
+      },
+      {
+        name: 'Low KYC Profile Level',
+        description: 'Checks if receiver account has Low or Unverified KYC validation status',
+        matched: signalLowKyc,
+        scoreEffect: signalLowKyc ? MULE.SCORE_LOW_KYC : 0,
+        details: `Profile KYC tier: ${kycLevel || 'UNVERIFIED'}.`
+      }
+    ]
+  };
+
+  const features = {
+    mule_risk_score:             finalContribution,
+    unique_inbound_sender_count: inboundSenderCount,
+    rapid_forward_ratio:         parseFloat(forwardRatio.toFixed(3)),
+    current_balance:             currentBalance ?? -1,
+    first_time_sender_ratio:     parseFloat(firstTimeSenderRatio.toFixed(3)),
+    prior_alert_count:           priorAlerts.length,
+    kyc_level_numeric:           kycLevel === 'HIGH' ? 2 : kycLevel === 'MEDIUM' ? 1 : 0,
+    signals_fired:               signalsFired,
+  };
 
   return {
     ruleName: 'MULE_RISK',
     riskContribution: finalContribution,
     flags: [...new Set(flags)],
     reasons,
-    features: {
-      mule_risk_score:             finalContribution,
-      unique_inbound_sender_count: inboundSenderCount,
-      rapid_forward_ratio:         parseFloat(forwardRatio.toFixed(3)),
-      current_balance:             currentBalance ?? -1,
-      first_time_sender_ratio:     parseFloat(firstTimeSenderRatio.toFixed(3)),
-      prior_alert_count:           priorAlerts.length,
-      kyc_level_numeric:           kycLevel === 'HIGH' ? 2 : kycLevel === 'MEDIUM' ? 1 : 0,
-      signals_fired:               signalsFired,
-    },
+    features,
+    trace,
   };
 }
 
@@ -279,17 +304,6 @@ function checkMuleRisk(tx, allTx, allAccounts, allAlerts, baseline) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * computeMuleScore
- *
- * A lightweight version of the mule detection logic that returns ONLY the
- * raw numerical mule probability score (0–95) for a given account ID.
- *
- * Designed to be imported by OTHER rules (layering, dormant, structuring)
- * so they can amplify their own risk when they involve high-mule-probability
- * accounts — without duplicating the scoring logic.
- *
- * NOTE: This does NOT build a full rule result. It has no side-effects.
- *
  * @param {string}   accountId    - the account to score as a potential mule
  * @param {Object[]} allTx        - all transactions in memory
  * @param {Object[]} allAccounts  - all accounts in memory
@@ -298,6 +312,10 @@ function checkMuleRisk(tx, allTx, allAccounts, allAlerts, baseline) {
  */
 function computeMuleScore(accountId, allTx, allAccounts, allAlerts) {
   if (!accountId) return 0;
+
+  const configService = require('../config/riskWeights');
+  const CONFIG = configService.get();
+  const { MULE } = CONFIG;
 
   const account      = allAccounts.find(a => a.account_id === accountId) || null;
   const now          = Date.now();
