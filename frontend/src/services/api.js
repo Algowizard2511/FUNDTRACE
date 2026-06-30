@@ -53,6 +53,7 @@ export const txApi = {
 export const alertApi = {
   getAll: (params) => api.get('/alerts', { params }),
   getStats: () => api.get('/alerts/stats'),
+  getOne: (alertId) => api.get(`/alerts/${alertId}`),
   updateStatus: (alertId, data) => api.patch(`/alerts/${alertId}/status`, data),
 };
 

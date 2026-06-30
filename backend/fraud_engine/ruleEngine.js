@@ -1,209 +1,359 @@
 /**
- * FundTrace AI — Rule-Based Fraud Detection Engine
- * Detects: Structuring, Round-Tripping, Layering, Dormant Activation, Fan-Out, Mule Behaviour
+ * FundTrace AI — Redesigned Rule-Based Fraud Detection Engine  (v2.1)
+ * ─────────────────────────────────────────────────────────────────────
+ *
+ * Architecture:
+ *   Each rule is an independent module in /rules/.
+ *   Each rule returns a standardized output:
+ *     { ruleName, riskContribution, flags, reasons, features }
+ *
+ *   Shared services in /services/ provide:
+ *     - behaviourBaseline   → per-customer historical profile
+ *     - receiverReputation  → dynamic trust score for any beneficiary
+ *     - geoRisk             → geographic anomaly scoring
+ *     - globalRiskScorer    → aggregates all rule outputs
+ *
+ *   The final output contains:
+ *     - finalScore (0–100)
+ *     - riskLevel (LOW / MEDIUM / HIGH / CRITICAL)
+ *     - action (recommended investigator action)
+ *     - allFlags (array of reason codes)
+ *     - explanation (human-readable alert detail)
+ *     - mlFeatures (rich feature vector for the ML layer)
+ *
+ * Rules (6 total):
+ *   1. structuringRule   — near-threshold patterns, convergence, frequency bursts
+ *   2. layeringRule      — multi-hop fund obfuscation chains, circular detection
+ *   3. fanOutRule        — rapid fund dispersal to many receivers
+ *   4. dormantRule       — suspicious reactivation of long-inactive accounts
+ *   5. velocityRule      — burst activity vs. historical baseline
+ *   6. muleRiskRule      — behavioural money-mule detection (6 signals)
+ *
+ * Cross-Rule Mule Probability Wiring (v2.1):
+ *   muleRiskRule exports computeMuleScore(accountId) — a lightweight helper
+ *   that scores any account 0–95 based on the 6 mule signals.
+ *   This score is consumed by three other rules to amplify their own risk:
+ *
+ *     layeringRule:
+ *       • Each hop node is scored — mule hops raise contribution by +5 (MEDIUM)
+ *         or +12 (HIGH) above the base SHELL_ACCOUNT_HOP weight
+ *       • Chain destination scored — +10 if HIGH mule (LAYERING_DESTINATION_IS_MULE)
+ *
+ *     dormantRule:
+ *       • Sender mule score ≥25 triggers ACTIVATED_BY_SUSPICIOUS_SENDER even if
+ *         account_type is not yet 'MULE' in the DB (catches unclassified mules)
+ *       • sender_mule_score exposed as an ML feature
+ *
+ *     structuringRule:
+ *       • After MANY_TO_ONE_CONVERGENCE fires, receiver mule score amplifies:
+ *         score 25–54 → +8 (CONVERGENCE_TO_MULE_MEDIUM)
+ *         score 55+   → +15 (CONVERGENCE_TO_MULE_HIGH)
+ *       • receiver_mule_score exposed as an ML feature
+ *
+ * Key Design Principles:
+ *   1. No single rule triggers a HIGH alert alone
+ *   2. Behaviour > Amount thresholds
+ *   3. Every alert is fully explainable
+ *   4. Salary / utility / known-beneficiary patterns reduce risk
+ *   5. Modular — add new rules without touching existing ones
+ *   6. Cross-rule signals compound: mule probability amplifies layering,
+ *      dormant activation, and structuring convergence detectors
+ *
+ * Compatible with:
+ *   - mock-server.js (in-memory arrays)
+ *   - server.js + MongoDB (passes allTx / allAccounts from DB)
  */
 
-const Transaction = require('../models/Transaction');
-const Account = require('../models/Account');
-const Alert = require('../models/Alert');
+'use strict';
+
 const { v4: uuidv4 } = require('uuid');
 
-const STRUCTURING_THRESHOLD = 50000; // INR reporting threshold simulation
-const STRUCTURING_WINDOW_MINUTES = 60;
-const LAYERING_DEPTH = 4;
-const RAPID_FAN_OUT_COUNT = 5;
-const DORMANT_DAYS = 90;
-const HIGH_VELOCITY_TXS = 10;
-const HIGH_VELOCITY_WINDOW_MINUTES = 30;
+// ── Config ──────────────────────────────────────────────────────────────────
+const { RISK_LEVELS } = require('./config/riskWeights');
 
-async function runFraudChecks(transaction, io) {
-  const flags = [];
-  const alerts = [];
+// ── Services ─────────────────────────────────────────────────────────────────
+const { buildBaseline } = require('./services/behaviourBaseline');
+const { getReceiverReputation } = require('./services/receiverReputation');
+const { evaluateGeoRisk } = require('./services/geoRisk');
+const { aggregate } = require('./services/globalRiskScorer');
+
+// ── Rule Modules ─────────────────────────────────────────────────────────────
+const { checkStructuring } = require('./rules/structuringRule');  // Rule 1 — now mule-aware (convergence amplification)
+const { checkLayering } = require('./rules/layeringRule');          // Rule 2 — now mule-aware (hop + destination scoring)
+const { checkFanOut } = require('./rules/fanOutRule');              // Rule 3
+const { checkDormantActivation } = require('./rules/dormantRule'); // Rule 4 — now mule-aware (behavioural sender check)
+const { checkVelocity } = require('./rules/velocityRule');          // Rule 5
+const { checkMuleRisk } = require('./rules/muleRiskRule');          // Rule 6 — provides computeMuleScore to Rules 1,2,4
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main Entry Point
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * runFraudEngine
+ *
+ * Orchestrates all 6 rule modules and the mule cross-rule amplification layer.
+ * Evaluation order:
+ *   1. Build sender behavioural baseline
+ *   2. Evaluate receiver reputation
+ *   3. Evaluate geographic risk
+ *   4. Run rules 1–6 (structuring, layering, fanOut, dormant, velocity, muleRisk)
+ *      Rules 1, 2, 4 internally call computeMuleScore() to amplify their own
+ *      contribution when they involve high-probability mule accounts.
+ *   5. Aggregate all rule outputs via globalRiskScorer
+ *   6. Emit alert + socket event if finalScore ≥ 30
+ *
+ * @param {Object}   tx          - the transaction being evaluated
+ * @param {Object}   context     - { allTx, allAccounts, allAlerts, io }
+ *                                 allTx / allAccounts / allAlerts = in-memory arrays
+ *                                 io = socket.io instance (optional)
+ * @returns {Object} result      - { finalScore, riskLevel, action, explanation, mlFeatures, allFlags }
+ */
+async function runFraudEngine(tx, context = {}) {
+  const { allTx = [], allAccounts = [], allAlerts = [], io = null } = context;
 
   try {
-    const [structuringAlert, layeringAlert, fanOutAlert, dormantAlert, muleAlert, velocityAlert] = await Promise.all([
-      checkStructuring(transaction),
-      checkLayering(transaction),
-      checkFanOut(transaction),
-      checkDormantActivation(transaction),
-      checkMuleBehaviour(transaction),
-      checkHighVelocity(transaction),
-    ]);
+    // ── 1. Lookup accounts ──────────────────────────────────────────────────
+    const senderAccount = allAccounts.find(a => a.account_id === tx.sender) || null;
+    const receiverAccount = allAccounts.find(a => a.account_id === tx.receiver) || null;
 
-    if (structuringAlert) { flags.push('STRUCTURING'); alerts.push(structuringAlert); }
-    if (layeringAlert) { flags.push('LAYERING'); alerts.push(layeringAlert); }
-    if (fanOutAlert) { flags.push('FAN_OUT'); alerts.push(fanOutAlert); }
-    if (dormantAlert) { flags.push('DORMANT_ACTIVATION'); alerts.push(dormantAlert); }
-    if (muleAlert) { flags.push('MULE_BEHAVIOUR'); alerts.push(muleAlert); }
-    if (velocityAlert) { flags.push('HIGH_VELOCITY'); alerts.push(velocityAlert); }
+    // ── 2. Build Behavioural Baseline for Sender ────────────────────────────
+    const baseline = buildBaseline(tx.sender, allTx);
 
-    if (flags.length > 0) {
-      const riskScore = Math.min(100, flags.length * 20 + (transaction.amount > 100000 ? 20 : 0));
-      await Transaction.findOneAndUpdate(
-        { tx_id: transaction.tx_id },
-        { anomaly_flag: true, rule_flags: flags, risk_score: riskScore, fraud_type: flags[0], status: 'FLAGGED' }
-      );
-      await Account.findOneAndUpdate({ account_id: transaction.sender }, { is_flagged: true, $inc: { risk_score: 10 } });
+    // ── 3. Receiver Reputation ──────────────────────────────────────────────
+    const receiverRep = getReceiverReputation(
+      tx.receiver, receiverAccount, allTx, allAlerts
+    );
 
-      for (const alert of alerts) {
-        const saved = await alert.save();
-        if (io) {
-          io.emit('new_alert', saved);
-        }
+    // ── 4. Geographic Risk ──────────────────────────────────────────────────
+    const recentFromSender = allTx
+      .filter(t => t.sender === tx.sender && t.tx_id !== tx.tx_id)
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, 5);
+
+    const knownCities = new Set(
+      recentFromSender.map(t => t.geo_origin?.city).filter(Boolean)
+    );
+
+    const geoResult = evaluateGeoRisk(tx, recentFromSender, knownCities);
+
+    // ── 5. Run All Rules ────────────────────────────────────────────────────
+    const structuringResult = checkStructuring(tx, allTx, baseline, allAccounts, allAlerts);
+    const layeringResult = checkLayering(tx, allTx, allAccounts, allAlerts);
+    const fanOutResult = checkFanOut(tx, allTx, allAccounts, baseline);
+    const dormantResult = checkDormantActivation(tx, receiverAccount, senderAccount, allTx, allAlerts, allAccounts);
+    const velocityResult = checkVelocity(tx, allTx, baseline);
+    const muleRiskResult = checkMuleRisk(tx, allTx, allAccounts, allAlerts, baseline);
+
+    // ── 6. Receiver Reputation as a Rule Result ─────────────────────────────
+    const receiverRiskResult = {
+      ruleName: 'RECEIVER_RISK',
+      riskContribution:
+        receiverRep.score >= 80 ? 15 :
+          receiverRep.score >= 60 ? 8 :
+            receiverRep.score >= 40 ? 3 : -5,
+      flags: receiverRep.flags,
+      reasons: receiverRep.flags.length > 0
+        ? [`Receiver ${tx.receiver} reputation score: ${receiverRep.score}/100 (${receiverRep.label}). ` +
+          `Flags: ${receiverRep.flags.join(', ')}.`]
+        : [],
+      features: {
+        receiver_reputation_score: receiverRep.score,
+        receiver_is_mule: receiverRep.flags.includes('RECEIVER_IS_MULE') ? 1 : 0,
+        receiver_is_shell: receiverRep.flags.includes('RECEIVER_IS_SHELL') ? 1 : 0,
+        receiver_is_flagged: receiverRep.flags.includes('RECEIVER_PREVIOUSLY_FLAGGED') ? 1 : 0,
+        receiver_kyc_low: receiverRep.flags.includes('RECEIVER_LOW_KYC') ? 1 : 0,
+      },
+    };
+
+    // ── 7. Geo as a Rule Result ─────────────────────────────────────────────
+    const geoRuleResult = {
+      ruleName: 'GEO_RISK',
+      riskContribution: geoResult.riskContribution,
+      flags: geoResult.flags,
+      reasons: geoResult.reasons,
+      features: {
+        geo_risk_score: geoResult.riskContribution,
+        is_sanctioned_country: geoResult.flags.includes('SANCTIONED_COUNTRY') ? 1 : 0,
+        is_high_risk_country: geoResult.flags.includes('HIGH_RISK_COUNTRY') ? 1 : 0,
+        is_new_city: geoResult.flags.includes('NEW_CITY_FIRST_TIME') ? 1 : 0,
+        impossible_travel: geoResult.flags.includes('IMPOSSIBLE_TRAVEL') ? 1 : 0,
+      },
+    };
+
+    // ── 8. Aggregate via Global Scorer ──────────────────────────────────────
+    const allRuleResults = [
+      structuringResult,
+      layeringResult,
+      fanOutResult,
+      dormantResult,
+      velocityResult,
+      muleRiskResult,
+      receiverRiskResult,
+      geoRuleResult,
+    ];
+
+    const aggregated = aggregate(allRuleResults);
+
+    // Enrich ML features with sender/receiver profile data
+    aggregated.mlFeatures = {
+      ...aggregated.mlFeatures,
+      // Transaction basics
+      tx_amount: tx.amount,
+      log_amount: Math.log1p(tx.amount),
+      is_round_amount: tx.amount % 1000 === 0 ? 1 : 0,
+      hour_of_day: new Date(tx.timestamp).getHours(),
+      day_of_week: new Date(tx.timestamp).getDay(),
+      // Sender profile
+      sender_tx_count: senderAccount?.tx_count || 0,
+      sender_total_out: senderAccount?.total_outgoing || 0,
+      sender_risk_score: senderAccount?.risk_score || 0,
+      sender_kyc: senderAccount ? { LOW: 0, MEDIUM: 1, HIGH: 2 }[senderAccount.kyc_level] || 1 : 1,
+      days_since_sender_active: senderAccount
+        ? Math.floor((Date.now() - new Date(senderAccount.last_active).getTime()) / 86400000)
+        : 0,
+      // Receiver profile
+      receiver_tx_count: receiverAccount?.tx_count || 0,
+      receiver_total_in: receiverAccount?.total_incoming || 0,
+      // Baseline
+      has_baseline: baseline.hasHistory ? 1 : 0,
+      baseline_avg_daily_amount: Math.round(baseline.avgDailyAmount),
+      baseline_avg_daily_count: parseFloat(baseline.avgDailyCount.toFixed(2)),
+      // Final engine score
+      rule_engine_score: aggregated.finalScore,
+    };
+
+    // ── 9. Persist & Emit if suspicious ────────────────────────────────────
+    const isSuspicious = aggregated.finalScore >= 30; // MEDIUM or above
+
+    if (isSuspicious) {
+      // Update transaction in-memory record
+      tx.anomaly_flag = true;
+      tx.rule_flags = aggregated.allFlags;
+      tx.risk_score = aggregated.finalScore;
+      tx.fraud_type = pickPrimaryFraudType(aggregated.allFlags);
+      tx.status = 'FLAGGED';
+      tx.ml_features = aggregated.mlFeatures;
+      tx.explanation = aggregated.explanation;
+
+      // Update sender account risk
+      if (senderAccount) {
+        senderAccount.is_flagged = aggregated.finalScore >= 60;
+        senderAccount.risk_score = Math.min(100, (senderAccount.risk_score || 0) + Math.round(aggregated.finalScore / 10));
+      }
+
+      // Build alert record
+      if (aggregated.finalScore >= 30) {
+        const alert = {
+          _id: uuidv4(),
+          alert_id: `ALT-${tx.fraud_type.slice(0, 3)}-${uuidv4().slice(0, 8).toUpperCase()}`,
+          alert_type: tx.fraud_type,
+          severity: aggregated.riskLevel,
+          risk_score: aggregated.finalScore,
+          status: 'OPEN',
+          tx_references: [tx.tx_id],
+          account_references: [...new Set([tx.sender, tx.receiver])],
+          description: aggregated.explanation.summary,
+          metadata: {
+            explanation: aggregated.explanation,
+            ml_features: aggregated.mlFeatures,
+            rule_flags: aggregated.allFlags,
+            reason_codes: aggregated.explanation.reasonCodes,
+            reasons: aggregated.explanation.detailedReasons,
+            recommended: aggregated.action,
+          },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+
+        if (io) io.emit('new_alert', alert);
+        if (io) io.emit('transaction_flagged', tx);
+
+        return {
+          ...aggregated,
+          alert,
+          isSuspicious: true,
+        };
       }
     }
 
-    return { flags, riskScore: flags.length * 20 };
+    return {
+      ...aggregated,
+      isSuspicious,
+    };
+
   } catch (err) {
-    console.error('Fraud check error:', err.message);
-    return { flags: [], riskScore: 0 };
+    console.error('[FraudEngine] Error:', err.message);
+    return {
+      finalScore: 0,
+      riskLevel: 'LOW',
+      action: 'No Action',
+      allFlags: [],
+      explanation: { summary: 'Engine error — transaction not scored', detailedReasons: [err.message] },
+      mlFeatures: {},
+      isSuspicious: false,
+    };
   }
 }
 
-async function checkStructuring(tx) {
-  if (tx.amount >= STRUCTURING_THRESHOLD) return null;
-  const windowStart = new Date(tx.timestamp - STRUCTURING_WINDOW_MINUTES * 60 * 1000);
-  const recentTxs = await Transaction.find({
-    sender: tx.sender,
-    timestamp: { $gte: windowStart },
-    amount: { $lt: STRUCTURING_THRESHOLD, $gt: STRUCTURING_THRESHOLD * 0.8 },
-    tx_id: { $ne: tx.tx_id }
-  }).sort({ timestamp: -1 }).limit(5);
-
-  if (recentTxs.length >= 2) {
-    const alert = new Alert({
-      alert_id: `ALT-STR-${uuidv4().slice(0, 8).toUpperCase()}`,
-      alert_type: 'STRUCTURING',
-      severity: 'HIGH',
-      risk_score: 75,
-      tx_references: [tx.tx_id, ...recentTxs.map(t => t.tx_id)],
-      account_references: [tx.sender],
-      description: `Structuring detected: ${recentTxs.length + 1} transactions near ₹${STRUCTURING_THRESHOLD.toLocaleString()} threshold from account ${tx.sender} within ${STRUCTURING_WINDOW_MINUTES} minutes.`,
-      metadata: { threshold: STRUCTURING_THRESHOLD, count: recentTxs.length + 1, amounts: [tx.amount, ...recentTxs.map(t => t.amount)] }
-    });
-    return alert;
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: pick the primary fraud type label from flags
+// ─────────────────────────────────────────────────────────────────────────────
+function pickPrimaryFraudType(flags) {
+  if (!flags || flags.length === 0) return 'NONE';
+  const priority = [
+    'CIRCULAR_TRANSACTION',
+    'FAN_OUT_FAN_IN_DETECTED',
+    'LAYERING',
+    'STRUCTURING',
+    'FAN_OUT',
+    'DORMANT_ACTIVATION',
+    'MULE_RISK_HIGH',
+    'MULE_RISK_MEDIUM',
+    'MULE_BEHAVIOUR',
+    'VELOCITY_BURST_COUNT',
+    'GEO_RISK',
+  ];
+  for (const p of priority) {
+    if (flags.some(f => f.includes(p))) return p;
   }
-  return null;
+  return flags[0] || 'ANOMALY';
 }
 
-async function checkLayering(tx) {
-  // BFS traversal to detect fund movement through chain of accounts
-  const visited = new Set();
-  const queue = [{ account: tx.sender, depth: 0 }];
-  let maxDepth = 0;
-  const chain = [tx.sender];
+// ─────────────────────────────────────────────────────────────────────────────
+// Backward-compatible wrapper for mock-server.js (in-memory mode)
+// ─────────────────────────────────────────────────────────────────────────────
 
-  while (queue.length > 0) {
-    const { account, depth } = queue.shift();
-    if (visited.has(account) || depth > LAYERING_DEPTH) continue;
-    visited.add(account);
-    maxDepth = Math.max(maxDepth, depth);
+/**
+ * detectFraud — replaces the old detectFraud(tx) used in mock-server.js
+ *
+ * @param {Object}   tx          - transaction being evaluated
+ * @param {Object}   db          - { accounts, transactions, alerts } in-memory store
+ * @param {Object}   io          - socket.io instance
+ * @returns {Object}             - { flags, riskScore, explanation, mlFeatures }
+ */
+async function detectFraud(tx, db, io) {
+  const result = await runFraudEngine(tx, {
+    allTx: db.transactions || [],
+    allAccounts: db.accounts || [],
+    allAlerts: db.alerts || [],
+    io,
+  });
 
-    const outTxs = await Transaction.find({ sender: account, timestamp: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } }).limit(3);
-    for (const outTx of outTxs) {
-      if (!visited.has(outTx.receiver)) {
-        queue.push({ account: outTx.receiver, depth: depth + 1 });
-        chain.push(outTx.receiver);
-      }
-    }
+  // Push alert into db.alerts if generated
+  if (result.alert) {
+    db.alerts.unshift(result.alert);
+    if (db.alerts.length > 500) db.alerts.pop();
   }
 
-  if (maxDepth >= LAYERING_DEPTH) {
-    const alert = new Alert({
-      alert_id: `ALT-LAY-${uuidv4().slice(0, 8).toUpperCase()}`,
-      alert_type: 'LAYERING',
-      severity: 'CRITICAL',
-      risk_score: 90,
-      tx_references: [tx.tx_id],
-      account_references: [...new Set(chain)],
-      description: `Layering detected: Funds traced through ${maxDepth} account hops originating from ${tx.sender}. Possible fund obfuscation chain.`,
-      metadata: { chain: [...new Set(chain)], depth: maxDepth }
-    });
-    return alert;
-  }
-  return null;
+  return {
+    flags: result.allFlags,
+    riskScore: result.finalScore,
+    riskLevel: result.riskLevel,
+    explanation: result.explanation,
+    mlFeatures: result.mlFeatures,
+    action: result.action,
+  };
 }
 
-async function checkFanOut(tx) {
-  const windowStart = new Date(Date.now() - 30 * 60 * 1000);
-  const recentTxs = await Transaction.find({ sender: tx.sender, timestamp: { $gte: windowStart } }).distinct('receiver');
-  if (recentTxs.length >= RAPID_FAN_OUT_COUNT) {
-    const alert = new Alert({
-      alert_id: `ALT-FAN-${uuidv4().slice(0, 8).toUpperCase()}`,
-      alert_type: 'FAN_OUT',
-      severity: 'HIGH',
-      risk_score: 80,
-      tx_references: [tx.tx_id],
-      account_references: [tx.sender, ...recentTxs],
-      description: `Rapid fan-out detected: Account ${tx.sender} sent to ${recentTxs.length} unique accounts within 30 minutes. Possible smurfing/distribution.`,
-      metadata: { receivers: recentTxs, count: recentTxs.length }
-    });
-    return alert;
-  }
-  return null;
-}
-
-async function checkDormantActivation(tx) {
-  const account = await Account.findOne({ account_id: tx.receiver });
-  if (!account) return null;
-  const daysSinceActive = (Date.now() - new Date(account.last_active)) / (1000 * 60 * 60 * 24);
-  if (daysSinceActive >= DORMANT_DAYS && tx.amount > 50000) {
-    await Account.findOneAndUpdate({ account_id: tx.receiver }, { status: 'SUSPICIOUS' });
-    const alert = new Alert({
-      alert_id: `ALT-DRM-${uuidv4().slice(0, 8).toUpperCase()}`,
-      alert_type: 'DORMANT_ACTIVATION',
-      severity: 'CRITICAL',
-      risk_score: 85,
-      tx_references: [tx.tx_id],
-      account_references: [tx.sender, tx.receiver],
-      description: `Dormant account activation: Account ${tx.receiver} inactive for ${Math.floor(daysSinceActive)} days received ₹${tx.amount.toLocaleString()} from ${tx.sender}.`,
-      metadata: { days_inactive: Math.floor(daysSinceActive), amount: tx.amount, receiver: tx.receiver }
-    });
-    return alert;
-  }
-  return null;
-}
-
-async function checkMuleBehaviour(tx) {
-  const account = await Account.findOne({ account_id: tx.receiver });
-  if (!account) return null;
-  if (account.total_incoming > 0) {
-    const outInRatio = account.total_outgoing / account.total_incoming;
-    const balanceRetention = account.balance / Math.max(account.total_incoming, 1);
-    if (outInRatio > 0.9 && balanceRetention < 0.05 && account.tx_count > 5) {
-      const alert = new Alert({
-        alert_id: `ALT-MUL-${uuidv4().slice(0, 8).toUpperCase()}`,
-        alert_type: 'MULE_BEHAVIOUR',
-        severity: 'HIGH',
-        risk_score: 82,
-        tx_references: [tx.tx_id],
-        account_references: [tx.receiver],
-        description: `Mule account behaviour: Account ${tx.receiver} passes ${(outInRatio * 100).toFixed(1)}% of incoming funds outward with near-zero balance retention.`,
-        metadata: { out_in_ratio: outInRatio, balance_retention: balanceRetention, tx_count: account.tx_count }
-      });
-      return alert;
-    }
-  }
-  return null;
-}
-
-async function checkHighVelocity(tx) {
-  const windowStart = new Date(Date.now() - HIGH_VELOCITY_WINDOW_MINUTES * 60 * 1000);
-  const txCount = await Transaction.countDocuments({ sender: tx.sender, timestamp: { $gte: windowStart } });
-  if (txCount >= HIGH_VELOCITY_TXS) {
-    const alert = new Alert({
-      alert_id: `ALT-VEL-${uuidv4().slice(0, 8).toUpperCase()}`,
-      alert_type: 'HIGH_VELOCITY',
-      severity: 'MEDIUM',
-      risk_score: 65,
-      tx_references: [tx.tx_id],
-      account_references: [tx.sender],
-      description: `High transaction velocity: Account ${tx.sender} performed ${txCount} transactions within ${HIGH_VELOCITY_WINDOW_MINUTES} minutes.`,
-      metadata: { tx_count: txCount, window_minutes: HIGH_VELOCITY_WINDOW_MINUTES }
-    });
-    return alert;
-  }
-  return null;
-}
-
-module.exports = { runFraudChecks };
+module.exports = { runFraudEngine, detectFraud };

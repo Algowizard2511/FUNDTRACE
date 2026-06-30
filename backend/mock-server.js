@@ -12,6 +12,7 @@ const { v4: uuidv4 } = require('uuid');
 const { faker } = require('@faker-js/faker');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { detectFraud } = require('./fraud_engine/ruleEngine');
 
 const app = express();
 const server = http.createServer(app);
@@ -96,101 +97,15 @@ function seedAccounts() {
   console.log(`✅ ${db.accounts.length} accounts seeded`);
 }
 
-// ==================== FRAUD DETECTION ====================
-const THRESHOLD = 50000;
-const alertCooldown = new Map(); // accountId -> lastAlertTime (prevents alert spam)
-
-function isOnCooldown(accountId, type, cooldownMs = 120000) {
-  const key = `${accountId}:${type}`;
-  const last = alertCooldown.get(key);
-  if (last && Date.now() - last < cooldownMs) return true;
-  alertCooldown.set(key, Date.now());
-  return false;
-}
-
-function detectFraud(tx) {
-  const flags = [];
-  const senderAccount = db.accounts.find(a => a.account_id === tx.sender);
-  const receiverAccount = db.accounts.find(a => a.account_id === tx.receiver);
-
-  // ONLY run velocity/fan-out checks on SHELL or MULE accounts (not normal savings)
-  const isSuspiciousAccount = senderAccount && ['SHELL', 'MULE'].includes(senderAccount.account_type);
-
-  const recentFromSender = db.transactions
-    .filter(t => t.sender === tx.sender && Date.now() - new Date(t.timestamp) < 60 * 60 * 1000);
-
-  // 1. Structuring — only on amounts actually near threshold
-  if (tx.amount >= THRESHOLD * 0.86 && tx.amount < THRESHOLD) {
-    const structuringTxs = recentFromSender.filter(t => t.amount >= THRESHOLD * 0.86 && t.amount < THRESHOLD);
-    if (structuringTxs.length >= 2 && !isOnCooldown(tx.sender, 'STRUCTURING')) {
-      flags.push('STRUCTURING');
-      createAlert('STRUCTURING', 'HIGH', 75, [tx.tx_id, ...structuringTxs.slice(0,2).map(t=>t.tx_id)], [tx.sender],
-        `Structuring detected: ${structuringTxs.length + 1} transactions near ₹${THRESHOLD.toLocaleString()} reporting threshold from ${tx.sender} within 60 min`);
-    }
-  }
-
-  // 2. Fan-out — ONLY for shell/mule accounts, needs 5+ unique in 10 min
-  if (isSuspiciousAccount) {
-    const last10min = recentFromSender.filter(t => Date.now() - new Date(t.timestamp) < 10 * 60 * 1000);
-    const uniqueReceivers = new Set(last10min.map(t => t.receiver));
-    uniqueReceivers.add(tx.receiver);
-    if (uniqueReceivers.size >= 5 && !isOnCooldown(tx.sender, 'FAN_OUT')) {
-      flags.push('FAN_OUT');
-      createAlert('FAN_OUT', 'HIGH', 80, [tx.tx_id], [tx.sender, ...Array.from(uniqueReceivers).slice(0,5)],
-        `Rapid fan-out: ${tx.sender} distributed funds to ${uniqueReceivers.size} accounts in 10 minutes`);
-    }
-  }
-
-  // 3. Dormant activation — account inactive > 90 days receives large transfer
-  if (receiverAccount && receiverAccount.status === 'DORMANT' && tx.amount > 50000) {
-    const daysSince = Math.floor((Date.now() - new Date(receiverAccount.last_active)) / 86400000);
-    if (!isOnCooldown(tx.receiver, 'DORMANT_ACTIVATION', 300000)) {
-      flags.push('DORMANT_ACTIVATION');
-      receiverAccount.status = 'SUSPICIOUS';
-      createAlert('DORMANT_ACTIVATION', 'CRITICAL', 90, [tx.tx_id], [tx.sender, tx.receiver],
-        `Dormant account ${tx.receiver} (inactive ${daysSince} days) received ₹${tx.amount.toLocaleString()} from ${tx.sender}`);
-    }
-  }
-
-  // 4. High velocity — ONLY for shell/mule, needs 10+ in 10 min
-  if (isSuspiciousAccount) {
-    const last10min = recentFromSender.filter(t => Date.now() - new Date(t.timestamp) < 10 * 60 * 1000);
-    if (last10min.length >= 10 && !isOnCooldown(tx.sender, 'HIGH_VELOCITY')) {
-      flags.push('HIGH_VELOCITY');
-      createAlert('HIGH_VELOCITY', 'MEDIUM', 65, [tx.tx_id], [tx.sender],
-        `High velocity: ${last10min.length + 1} transactions from ${tx.sender} in 10 minutes`);
-    }
-  }
-
-  // 5. Large round amount to shell/mule
-  if (tx.amount >= 100000 && receiverAccount && ['SHELL','MULE'].includes(receiverAccount.account_type)) {
-    if (!isOnCooldown(tx.receiver, 'MULE_TRANSFER', 180000)) {
-      flags.push('MULE_TRANSFER');
-      createAlert('MULE_TRANSFER', 'HIGH', 72, [tx.tx_id], [tx.sender, tx.receiver],
-        `Large transfer ₹${tx.amount.toLocaleString()} to ${receiverAccount.account_type.toLowerCase()} account ${tx.receiver}`);
-    }
-  }
-
-  return flags;
-}
-
-function createAlert(type, severity, risk_score, tx_refs, acc_refs, description) {
-  const alert = {
-    _id: uuidv4(), alert_id: `ALT-${type.slice(0,3)}-${uuidv4().slice(0,6).toUpperCase()}`,
-    alert_type: type, severity, risk_score, status: 'OPEN',
-    tx_references: tx_refs, account_references: acc_refs, description,
-    metadata: {}, createdAt: new Date(), updatedAt: new Date()
-  };
-  db.alerts.unshift(alert);
-  if (db.alerts.length > 500) db.alerts.pop();
-  io.emit('new_alert', alert);
-  return alert;
-}
+// ==================== FRAUD DETECTION (v2 — Modular Rule Engine) ==============
+// The old inline detectFraud is replaced by the imported modular engine.
+// detectFraud(tx, db, io) is exported from fraud_engine/ruleEngine.js
 
 // ==================== SIMULATOR ====================
 function emitTransaction(txData) {
   txData._id = uuidv4();
   txData.createdAt = new Date();
+  txData.rule_flags = txData.rule_flags || [];
   db.transactions.unshift(txData);
   if (db.transactions.length > 2000) db.transactions.pop();
 
@@ -201,17 +116,16 @@ function emitTransaction(txData) {
 
   io.emit('new_transaction', txData);
 
-  // Fraud detection — only run on non-normal transactions OR randomly on normal
-  const flags = detectFraud(txData);
-  if (flags.length > 0) {
-    txData.anomaly_flag = true;
-    txData.rule_flags = flags;
-    txData.fraud_type = flags[0];
-    txData.risk_score = Math.min(95, 50 + flags.length * 15 + (txData.amount > 100000 ? 10 : 0));
-    txData.status = 'FLAGGED';
-    if (sender) { sender.is_flagged = true; sender.risk_score = Math.min(100, (sender.risk_score || 0) + 8); }
-    io.emit('transaction_flagged', txData);
-  }
+  // ── New: Async modular fraud engine ─────────────────────────────────────────
+  // We call detectFraud asynchronously so the simulator doesn't block.
+  // detectFraud mutates txData in-place (sets anomaly_flag, rule_flags etc.)
+  // and pushes any generated alert into db.alerts.
+  detectFraud(txData, db, io).then(result => {
+    if (result && result.flags && result.flags.length > 0) {
+      io.emit('transaction_flagged', txData);
+    }
+  }).catch(err => console.error('[FraudEngine] async error:', err.message));
+
   return txData;
 }
 
@@ -474,6 +388,12 @@ app.get('/api/alerts/stats', (req, res) => {
     by_type: Object.entries(byType).map(([_id, count]) => ({ _id, count })),
     by_severity: Object.entries(bySev).map(([_id, count]) => ({ _id, count })),
   });
+});
+
+app.get('/api/alerts/:alert_id', (req, res) => {
+  const alert = db.alerts.find(a => a.alert_id === req.params.alert_id);
+  if (!alert) return res.status(404).json({ error: 'Not found' });
+  res.json(alert);
 });
 
 app.patch('/api/alerts/:alert_id/status', (req, res) => {
