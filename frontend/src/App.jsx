@@ -13,6 +13,7 @@ import AlertsPage from './pages/AlertsPage';
 import InvestigationsPage from './pages/InvestigationsPage';
 import AccountsPage from './pages/AccountsPage';
 import GeoMapPage from './pages/GeoMapPage';
+import RuleSettingsPage from './pages/RuleSettingsPage';
 import SimulationStudio from './pages/SimulationStudio';
 
 const queryClient = new QueryClient({
@@ -51,6 +52,7 @@ function App() {
                 <Route path="investigations" element={<InvestigationsPage />} />
                 <Route path="accounts" element={<AccountsPage />} />
                 <Route path="geomap" element={<GeoMapPage />} />
+                <Route path="rules" element={<RuleSettingsPage />} />
                 <Route path="simulation" element={<SimulationStudio />} />
               </Route>
             </Routes>

@@ -22,7 +22,28 @@ const { deviationFactor } = require('../services/behaviourBaseline');
  * @param {Object}   baseline - from behaviourBaseline.buildBaseline()
  * @returns {{ riskContribution, flags, reasons, features }}
  */
+/**
+ * @param {Object}   tx       - current transaction
+ * @param {Object[]} allTx    - all transactions in memory
+ * @param {Object}   baseline - from behaviourBaseline.buildBaseline()
+ * @returns {{ riskContribution, flags, reasons, features }}
+ */
 function checkVelocity(tx, allTx, baseline) {
+  const configService = require('../config/riskWeights');
+  const CONFIG = configService.get();
+  const { RULE_STATES, MODIFIERS, BEHAVIOUR } = CONFIG;
+
+  if (RULE_STATES && RULE_STATES.VELOCITY === false) {
+    return {
+      ruleName: 'VELOCITY',
+      riskContribution: 0,
+      flags: [],
+      reasons: [],
+      features: { velocity_risk_score: 0 },
+      trace: { ruleName: 'VELOCITY', enabled: false, score: 0, checks: [] }
+    };
+  }
+
   const flags   = [];
   const reasons = [];
   let contribution = 0;
@@ -43,10 +64,17 @@ function checkVelocity(tx, allTx, baseline) {
   const sessionValue  = sessionTxs.reduce((s, t) => s + t.amount, 0);
   const sessionMinutes = BEHAVIOUR.VELOCITY_WINDOW_MS / 60000;
 
+  let countDeviationMatched = false;
+  let countDev = 0;
+  let valueDeviationMatched = false;
+  let valueDev = 0;
+  let absoluteThresholdMatched = false;
+
   // ── Count Deviation ──────────────────────────────────────────────────────────
   if (baseline.hasHistory) {
-    const countDev = deviationFactor(sessionCount, baseline.avgDailyCount);
+    countDev = deviationFactor(sessionCount, baseline.avgDailyCount);
     if (countDev >= BEHAVIOUR.VELOCITY_BURST_MULTIPLIER) {
+      countDeviationMatched = true;
       contribution += MODIFIERS.BURST_HIGH_COUNT;
       flags.push('VELOCITY_BURST_COUNT');
       reasons.push(
@@ -57,8 +85,9 @@ function checkVelocity(tx, allTx, baseline) {
     }
 
     // ── Value Deviation ────────────────────────────────────────────────────────
-    const valueDev = deviationFactor(sessionValue, baseline.avgDailyAmount);
+    valueDev = deviationFactor(sessionValue, baseline.avgDailyAmount);
     if (valueDev >= BEHAVIOUR.VELOCITY_BURST_MULTIPLIER) {
+      valueDeviationMatched = true;
       contribution += MODIFIERS.BURST_HIGH_VALUE;
       flags.push('VELOCITY_BURST_VALUE');
       reasons.push(
@@ -70,6 +99,7 @@ function checkVelocity(tx, allTx, baseline) {
   } else {
     // No baseline: use absolute minimum threshold for completely new accounts
     if (sessionCount >= 10) {
+      absoluteThresholdMatched = true;
       contribution += MODIFIERS.BURST_HIGH_COUNT;
       flags.push('VELOCITY_BURST_COUNT_NEW_ACCOUNT');
       reasons.push(
@@ -80,6 +110,7 @@ function checkVelocity(tx, allTx, baseline) {
 
   // ── Average Interval (too-fast = bot-like) ───────────────────────────────────
   let avgIntervalSec = Infinity;
+  let intervalTooFastMatched = false;
   if (sessionTxs.length >= 2) {
     const intervals = [];
     for (let i = 1; i < sessionTxs.length; i++) {
@@ -89,6 +120,7 @@ function checkVelocity(tx, allTx, baseline) {
     avgIntervalSec = intervals.reduce((s, v) => s + v, 0) / intervals.length;
 
     if (avgIntervalSec < BEHAVIOUR.VELOCITY_MAX_INTERVAL_FAST_SEC) {
+      intervalTooFastMatched = true;
       contribution += MODIFIERS.SESSION_TOO_FAST;
       flags.push('SESSION_TOO_FAST');
       reasons.push(
@@ -101,8 +133,9 @@ function checkVelocity(tx, allTx, baseline) {
   // ── Late-Night Activity ──────────────────────────────────────────────────────
   const txHour = new Date(tx.timestamp).getHours();
   const isNight = txHour >= 23 || txHour <= 5;
+  const nightBurstMatched = isNight && sessionCount >= 3;
 
-  if (isNight && sessionCount >= 3) {
+  if (nightBurstMatched) {
     contribution += MODIFIERS.NIGHT_SESSION;
     flags.push('NIGHT_SESSION_BURST');
     reasons.push(
@@ -110,8 +143,55 @@ function checkVelocity(tx, allTx, baseline) {
     );
   }
 
+  const finalContribution = Math.min(CONFIG.VELOCITY_MAX, Math.max(0, contribution));
+
+  const trace = {
+    ruleName: 'VELOCITY',
+    enabled: true,
+    score: finalContribution,
+    rawScore: contribution,
+    maxPossibleScore: CONFIG.VELOCITY_MAX,
+    checks: [
+      {
+        name: 'Historical Count Velocity',
+        description: `Flags count surges exceeding historical daily average by ${BEHAVIOUR.VELOCITY_BURST_MULTIPLIER}x in ${sessionMinutes}m`,
+        matched: countDeviationMatched,
+        scoreEffect: countDeviationMatched ? MODIFIERS.BURST_HIGH_COUNT : 0,
+        details: baseline.hasHistory ? `Count deviation: ${countDev.toFixed(1)}x.` : 'No baseline history.'
+      },
+      {
+        name: 'Historical Value Velocity',
+        description: `Flags value surges exceeding historical daily average by ${BEHAVIOUR.VELOCITY_BURST_MULTIPLIER}x in ${sessionMinutes}m`,
+        matched: valueDeviationMatched,
+        scoreEffect: valueDeviationMatched ? MODIFIERS.BURST_HIGH_VALUE : 0,
+        details: baseline.hasHistory ? `Value deviation: ${valueDev.toFixed(1)}x.` : 'No baseline history.'
+      },
+      {
+        name: 'New Account Absolute Count Limit',
+        description: `Flags new accounts exceeding ${10} transactions within ${sessionMinutes} minutes without baseline`,
+        matched: absoluteThresholdMatched,
+        scoreEffect: absoluteThresholdMatched ? MODIFIERS.BURST_HIGH_COUNT : 0,
+        details: absoluteThresholdMatched ? `New account session count: ${sessionCount}.` : 'Account has history or is below limit.'
+      },
+      {
+        name: 'High Frequency Interval Check',
+        description: `Detects bot-like transaction intervals (average interval < ${BEHAVIOUR.VELOCITY_MAX_INTERVAL_FAST_SEC} seconds)`,
+        matched: intervalTooFastMatched,
+        scoreEffect: intervalTooFastMatched ? MODIFIERS.SESSION_TOO_FAST : 0,
+        details: `Average interval between transactions: ${avgIntervalSec === Infinity ? 'N/A' : avgIntervalSec.toFixed(1) + 's'}.`
+      },
+      {
+        name: 'Late Night High Velocity Check',
+        description: 'Raises risk if multiple transactions occur during unusual late night hours (11 PM - 5 AM)',
+        matched: nightBurstMatched,
+        scoreEffect: nightBurstMatched ? MODIFIERS.NIGHT_SESSION : 0,
+        details: `Session count at hour ${txHour}:00h: ${sessionCount}.`
+      }
+    ]
+  };
+
   const features = {
-    velocity_risk_score:      contribution,
+    velocity_risk_score:      finalContribution,
     session_tx_count:         sessionCount,
     session_total_value:      Math.round(sessionValue),
     session_avg_interval_sec: avgIntervalSec === Infinity ? 0 : parseFloat(avgIntervalSec.toFixed(1)),
@@ -122,11 +202,14 @@ function checkVelocity(tx, allTx, baseline) {
 
   return {
     ruleName: 'VELOCITY',
-    riskContribution: contribution,
+    riskContribution: finalContribution,
     flags: [...new Set(flags)],
     reasons,
     features,
+    trace,
   };
 }
+
+module.exports = { checkVelocity };
 
 module.exports = { checkVelocity };

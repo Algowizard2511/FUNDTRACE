@@ -40,6 +40,24 @@ const NEAR_BAND = BEHAVIOUR.NEAR_THRESHOLD_BAND;
  * @returns {{ riskContribution: number, flags: string[], reasons: string[], features: Object }}
  */
 function checkStructuring(tx, allTx, baseline, allAccounts = [], allAlerts = []) {
+  const configService = require('../config/riskWeights');
+  const CONFIG = configService.get();
+  const { RULE_STATES, MODIFIERS, BEHAVIOUR } = CONFIG;
+
+  if (RULE_STATES && RULE_STATES.STRUCTURING === false) {
+    return {
+      ruleName: 'STRUCTURING',
+      riskContribution: 0,
+      flags: [],
+      reasons: [],
+      features: { structuring_risk_score: 0 },
+      trace: { ruleName: 'STRUCTURING', enabled: false, score: 0, checks: [] }
+    };
+  }
+
+  const THRESHOLD = BEHAVIOUR.STRUCTURING_THRESHOLD_INR;
+  const NEAR_BAND = BEHAVIOUR.NEAR_THRESHOLD_BAND;
+
   const flags = [];
   const reasons = [];
   let contribution = 0;
@@ -71,17 +89,20 @@ function checkStructuring(tx, allTx, baseline, allAccounts = [], allAlerts = [])
   const count1h      = recent1h.length;
 
   // ── Near-Threshold Pattern ───────────────────────────────────────────────────
-  // Transactions where NEAR_BAND * THRESHOLD ≤ amount < THRESHOLD
   const nearThresholdMin = THRESHOLD * NEAR_BAND;
   const nearThresholdTxs = recent1h.filter(
     t => t.amount >= nearThresholdMin && t.amount < THRESHOLD
   );
   const nearThresholdCount = nearThresholdTxs.length;
   const nearThresholdTotal = nearThresholdTxs.reduce((s, t) => s + t.amount, 0);
+  let nearThresholdMatched = false;
+  let nearThresholdVarianceAlert = false;
 
   if (nearThresholdCount >= BEHAVIOUR.NEAR_THRESHOLD_MIN_COUNT) {
+    nearThresholdMatched = true;
     const stdDev = coefficientOfVariation(nearThresholdTxs.map(t => t.amount));
-    const isRepeated = stdDev < 0.02; // very low variance means intentional repetition
+    const isRepeated = stdDev < 0.02;
+    if (isRepeated) nearThresholdVarianceAlert = true;
 
     contribution += MODIFIERS.NEAR_THRESHOLD_PATTERN;
     flags.push('NEAR_THRESHOLD_PATTERN');
@@ -95,7 +116,8 @@ function checkStructuring(tx, allTx, baseline, allAccounts = [], allAlerts = [])
 
   // ── High Frequency in Short Window ──────────────────────────────────────────
   const countRecent30m = recent30m.length;
-  if (countRecent30m >= 5) {
+  const freqMatched = countRecent30m >= 5;
+  if (freqMatched) {
     contribution += MODIFIERS.HIGH_FREQUENCY_SHORT_WINDOW;
     flags.push('HIGH_FREQUENCY_SHORT_WINDOW');
     reasons.push(
@@ -105,12 +127,16 @@ function checkStructuring(tx, allTx, baseline, allAccounts = [], allAlerts = [])
   }
 
   // ── Historical Baseline Deviation ────────────────────────────────────────────
+  let baselineMatched = false;
+  let baselineDetail = 'No baseline history';
   if (baseline.hasHistory) {
     const countDeviation   = deviationFactor(count1h, baseline.avgDailyCount);
     const amountDeviation  = deviationFactor(aggregate1h, baseline.avgDailyAmount);
+    baselineDetail = `Count deviation: ${countDeviation.toFixed(1)}x, value deviation: ${amountDeviation.toFixed(1)}x`;
 
     if (countDeviation > BEHAVIOUR.BASELINE_DEVIATION_MULTIPLIER ||
         amountDeviation > BEHAVIOUR.BASELINE_DEVIATION_MULTIPLIER) {
+      baselineMatched = true;
       contribution += MODIFIERS.HISTORICAL_DEVIATION;
       flags.push('HISTORICAL_DEVIATION');
       reasons.push(
@@ -125,8 +151,9 @@ function checkStructuring(tx, allTx, baseline, allAccounts = [], allAlerts = [])
   const receivers1h = [...new Set(recent1h.map(t => t.receiver))];
   const newReceivers = receivers1h.filter(r => !baseline.knownBeneficiaries.has(r));
   const newBeneficiaryRatio = receivers1h.length > 0 ? newReceivers.length / receivers1h.length : 0;
+  const newBeneficiaryMatched = newBeneficiaryRatio >= BEHAVIOUR.FAN_OUT_NEW_BENEFICIARY_RATIO && receivers1h.length >= 5;
 
-  if (newBeneficiaryRatio >= BEHAVIOUR.FAN_OUT_NEW_BENEFICIARY_RATIO && receivers1h.length >= 5) {
+  if (newBeneficiaryMatched) {
     contribution += MODIFIERS.MULTIPLE_NEW_BENEFICIARIES;
     flags.push('MULTIPLE_NEW_BENEFICIARIES');
     reasons.push(
@@ -135,7 +162,7 @@ function checkStructuring(tx, allTx, baseline, allAccounts = [], allAlerts = [])
     );
   }
 
-  // ── Many-to-One Convergence (Structuring from multiple senders to this receiver) ──
+  // ── Many-to-One Convergence ──────────────────────────────────────────────────
   const receiversInTx = allTx.filter(
     t => t.receiver === tx.receiver &&
          t.tx_id !== tx.tx_id &&
@@ -143,7 +170,12 @@ function checkStructuring(tx, allTx, baseline, allAccounts = [], allAlerts = [])
          t.amount >= nearThresholdMin && t.amount < THRESHOLD
   );
   const convergenceSenders = new Set(receiversInTx.map(t => t.sender));
-  if (convergenceSenders.size >= 3) {
+  const convergenceMatched = convergenceSenders.size >= 3;
+  let receiverMuleScore = 0;
+  let muleConvergenceAlert = false;
+  let muleConvergenceScore = 0;
+
+  if (convergenceMatched) {
     contribution += MODIFIERS.MANY_TO_ONE_CONVERGENCE;
     flags.push('MANY_TO_ONE_CONVERGENCE');
     reasons.push(
@@ -151,10 +183,10 @@ function checkStructuring(tx, allTx, baseline, allAccounts = [], allAlerts = [])
       `to the same receiver (${tx.receiver}) within 1 hour. Possible coordinated structuring.`
     );
 
-    // Cross-rule amplification: if the convergence target is also a probable mule,
-    // this is consistent with a coordinated mule collection network — significantly higher risk.
-    const receiverMuleScore = computeMuleScore(tx.receiver, allTx, allAccounts, allAlerts);
+    receiverMuleScore = computeMuleScore(tx.receiver, allTx, allAccounts, allAlerts);
     if (receiverMuleScore >= 55) {
+      muleConvergenceAlert = true;
+      muleConvergenceScore = 15;
       contribution += 15;
       flags.push('CONVERGENCE_TO_MULE_HIGH');
       reasons.push(
@@ -162,6 +194,8 @@ function checkStructuring(tx, allTx, baseline, allAccounts = [], allAlerts = [])
         `Multiple senders structuring funds directly into a mule account — coordinated mule network pattern.`
       );
     } else if (receiverMuleScore >= 25) {
+      muleConvergenceAlert = true;
+      muleConvergenceScore = 8;
       contribution += 8;
       flags.push('CONVERGENCE_TO_MULE_MEDIUM');
       reasons.push(
@@ -172,22 +206,22 @@ function checkStructuring(tx, allTx, baseline, allAccounts = [], allAlerts = [])
   }
 
   // ── False Positive Reducers ──────────────────────────────────────────────────
-  // Salary pattern: large round amount, same day monthly, same receiver
-  if (isSalaryPattern(tx, allTx)) {
+  const salaryMatched = isSalaryPattern(tx, allTx);
+  if (salaryMatched) {
     contribution += MODIFIERS.SALARY_PATTERN;
     flags.push('SALARY_PATTERN');
     reasons.push('Transaction matches historical salary disbursement pattern (same day, similar amount, known receiver). Risk reduced.');
   }
 
-  // Utility payment (small amount, known utility-type receiver)
-  if (isUtilityPattern(tx)) {
+  const utilityMatched = isUtilityPattern(tx);
+  if (utilityMatched) {
     contribution += MODIFIERS.UTILITY_PAYMENT;
     flags.push('UTILITY_PAYMENT');
     reasons.push('Transaction resembles utility or recurring bill payment. Risk reduced.');
   }
 
-  // Known beneficiary (receiver in historical baseline)
-  if (baseline.knownBeneficiaries.has(tx.receiver)) {
+  const knownBeneficiaryMatched = baseline.knownBeneficiaries.has(tx.receiver);
+  if (knownBeneficiaryMatched) {
     contribution += MODIFIERS.KNOWN_BENEFICIARY;
     flags.push('KNOWN_BENEFICIARY');
     reasons.push(`Receiver ${tx.receiver} has been transacted with previously. Risk reduced.`);
@@ -208,17 +242,87 @@ function checkStructuring(tx, allTx, baseline, allAccounts = [], allAlerts = [])
     new_beneficiary_count:         newReceivers.length,
     new_beneficiary_ratio:         parseFloat(newBeneficiaryRatio.toFixed(3)),
     convergence_sender_count:      convergenceSenders.size,
-    receiver_mule_score:           receiverMuleScoreForFeature,   // cross-rule mule signal
+    receiver_mule_score:           receiverMuleScoreForFeature,
     count_deviation_from_baseline: baseline.hasHistory ? deviationFactor(count1h, baseline.avgDailyCount) : 0,
     amount_deviation_from_baseline:baseline.hasHistory ? deviationFactor(aggregate1h, baseline.avgDailyAmount) : 0,
   };
 
+  const finalContribution = Math.min(CONFIG.STRUCTURING_MAX, Math.max(0, contribution));
+
+  const trace = {
+    ruleName: 'STRUCTURING',
+    enabled: true,
+    score: finalContribution,
+    rawScore: contribution,
+    maxPossibleScore: CONFIG.STRUCTURING_MAX,
+    checks: [
+      {
+        name: 'Near-Threshold Value Clustering',
+        description: `Detects repeatedly sending amounts close to PMLA reporting threshold (₹${THRESHOLD.toLocaleString()} INR)`,
+        matched: nearThresholdMatched,
+        scoreEffect: nearThresholdMatched ? MODIFIERS.NEAR_THRESHOLD_PATTERN : 0,
+        details: `Found ${nearThresholdCount} near-threshold transactions within 1h (Band: >= ${NEAR_BAND * 100}% of threshold).` +
+                 (nearThresholdVarianceAlert ? ' Uniform transaction values found (low variance).' : '')
+      },
+      {
+        name: 'High Frequency Short Window',
+        description: 'Detects rapid burst of transactions in a rolling 30-minute window',
+        matched: freqMatched,
+        scoreEffect: freqMatched ? MODIFIERS.HIGH_FREQUENCY_SHORT_WINDOW : 0,
+        details: `Found ${countRecent30m} transactions in 30 mins (threshold: >= 5).`
+      },
+      {
+        name: 'Historical Baseline Deviation',
+        description: 'Compares activity rate and volume against historical baseline profile',
+        matched: baselineMatched,
+        scoreEffect: baselineMatched ? MODIFIERS.HISTORICAL_DEVIATION : 0,
+        details: `Baseline status: ${baseline.hasHistory ? 'Available' : 'Unavailable'}. ${baselineDetail}.`
+      },
+      {
+        name: 'Multiple New Beneficiaries',
+        description: 'Detects if transactions are sent mostly to new receivers not previously in history',
+        matched: newBeneficiaryMatched,
+        scoreEffect: newBeneficiaryMatched ? MODIFIERS.MULTIPLE_NEW_BENEFICIARIES : 0,
+        details: `New beneficiary ratio: ${Math.round(newBeneficiaryRatio * 100)}% (threshold: >= ${BEHAVIOUR.FAN_OUT_NEW_BENEFICIARY_RATIO * 100}%).`
+      },
+      {
+        name: 'Many-to-One Convergence',
+        description: 'Identifies multiple senders converging near-threshold transfers to a single receiver',
+        matched: convergenceMatched,
+        scoreEffect: convergenceMatched ? (MODIFIERS.MANY_TO_ONE_CONVERGENCE + muleConvergenceScore) : 0,
+        details: `Identified ${convergenceSenders.size} senders converging to ${tx.receiver}. Coordinated mule score: ${receiverMuleScore}/95.`
+      },
+      {
+        name: 'Salary Pattern Mitigator',
+        description: 'Reduces risk if transaction matches repeating salary profile',
+        matched: salaryMatched,
+        scoreEffect: salaryMatched ? MODIFIERS.SALARY_PATTERN : 0,
+        details: salaryMatched ? 'Matches monthly salary criteria.' : 'No salary pattern match.'
+      },
+      {
+        name: 'Utility Merchant Mitigator',
+        description: 'Reduces risk if transaction description is linked to utilities/bills',
+        matched: utilityMatched,
+        scoreEffect: utilityMatched ? MODIFIERS.UTILITY_PAYMENT : 0,
+        details: utilityMatched ? 'Matches bill/utility merchant keywords.' : 'No utility keyword match.'
+      },
+      {
+        name: 'Known Beneficiary Mitigator',
+        description: 'Reduces risk if the receiver is already in the historical trust list',
+        matched: knownBeneficiaryMatched,
+        scoreEffect: knownBeneficiaryMatched ? MODIFIERS.KNOWN_BENEFICIARY : 0,
+        details: knownBeneficiaryMatched ? 'Receiver previously transacted with.' : 'First transaction with receiver.'
+      }
+    ]
+  };
+
   return {
     ruleName: 'STRUCTURING',
-    riskContribution: contribution,
+    riskContribution: finalContribution,
     flags,
     reasons,
     features,
+    trace,
   };
 }
 

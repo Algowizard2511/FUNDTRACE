@@ -17,6 +17,18 @@ echo  Starting FundTrace AI Demo (No MongoDB Required)
 echo ============================================================
 echo.
 
+:: Install backend dependencies if missing
+if not exist "%~dp0backend\node_modules\express\" (
+    echo [Setup] backend dependencies not found. Installing...
+    cd /d "%~dp0backend" && call npm install
+)
+
+:: Install frontend dependencies if missing
+if not exist "%~dp0frontend\node_modules\vite\" (
+    echo [Setup] frontend dependencies not found. Installing...
+    cd /d "%~dp0frontend" && call npm install
+)
+
 :: Start backend in new window
 echo [1/2] Starting Backend Server (Demo Mode)...
 start "FundTrace Backend" cmd /k "cd /d %~dp0backend && node mock-server.js"
