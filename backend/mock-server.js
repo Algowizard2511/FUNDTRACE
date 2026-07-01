@@ -56,7 +56,7 @@ function seedAccounts() {
     const city = faker.helpers.arrayElement(CITIES);
     db.accounts.push({
       _id: `acc-${i}`, account_id: `ACC${String(i + 1).padStart(6, '0')}`,
-      customer_name: faker.person.fullName(), kyc_level: faker.helpers.arrayElement(['LOW','MEDIUM','HIGH']),
+      customer_name: faker.person.fullName(), kyc_level: faker.helpers.arrayElement(['LOW', 'MEDIUM', 'HIGH']),
       branch: faker.helpers.arrayElement(BRANCHES), status: 'ACTIVE', account_type: 'SAVINGS',
       balance: faker.number.float({ min: 10000, max: 500000, fractionDigits: 0 }),
       last_active: faker.date.recent({ days: 30 }), geo_location: city,
@@ -180,7 +180,7 @@ function simulateNormal() {
   const s = faker.helpers.arrayElement(accs);
   const r = faker.helpers.arrayElement(accs.filter(a => a.account_id !== s.account_id));
   const amount = faker.number.float({ min: 200, max: 25000, fractionDigits: 0 });
-  emitTransaction(makeTx(s.account_id, r.account_id, amount, faker.helpers.arrayElement(['UPI','IMPS','NEFT'])));
+  emitTransaction(makeTx(s.account_id, r.account_id, amount, faker.helpers.arrayElement(['UPI', 'IMPS', 'NEFT'])));
 }
 
 async function simulateLayering() {
@@ -191,7 +191,7 @@ async function simulateLayering() {
   let amount = faker.number.float({ min: 200000, max: 800000, fractionDigits: 0 });
   for (let i = 0; i < chain.length - 1; i++) {
     amount = Math.floor(amount * 0.85);
-    emitTransaction(makeTx(chain[i].account_id, chain[i+1].account_id, amount, 'WIRE', true));
+    emitTransaction(makeTx(chain[i].account_id, chain[i + 1].account_id, amount, 'WIRE', true));
     await new Promise(r => setTimeout(r, 800));
   }
 }
@@ -274,42 +274,83 @@ app.patch('/api/rules/config', (req, res) => {
 // RULE DRY RUN TESTER
 app.post('/api/rules/dry-run', async (req, res) => {
   try {
-    const { sender, receiver, amount, transaction_type = 'UPI', channel = 'MOBILE', city = 'Mumbai' } = req.body;
-    
-    if (!sender || !receiver || !amount) {
-      return res.status(400).json({ error: 'sender, receiver, and amount are required' });
+    const { chain, sender, receiver, amount, transaction_type = 'UPI', channel = 'MOBILE', city = 'Mumbai' } = req.body;
+
+    let txChainInput = [];
+    if (chain && Array.isArray(chain)) {
+      txChainInput = chain;
+    } else if (sender && receiver && amount) {
+      txChainInput = [{ sender, receiver, amount, transaction_type, channel, city }];
+    } else {
+      return res.status(400).json({ error: 'Either "chain" array or "sender, receiver, amount" fields are required' });
     }
 
-    const tx = {
-      tx_id: `DRY-${uuidv4().slice(0, 8).toUpperCase()}`,
-      sender,
-      receiver,
-      amount: Number(amount),
-      timestamp: new Date(),
-      transaction_type,
-      channel,
-      geo_origin: { city, state: 'Maharashtra', lat: 19.076, lng: 72.877 },
-      description: 'Dry Run Transaction Test'
-    };
+    let maxOffset = 0;
+    const chainWithOffsets = txChainInput.map((row, idx) => {
+      const ts_offset_seconds = row.ts_offset_seconds !== undefined && row.ts_offset_seconds !== '' ? Number(row.ts_offset_seconds) : idx * 45;
+      if (ts_offset_seconds > maxOffset) {
+        maxOffset = ts_offset_seconds;
+      }
+      return { ...row, ts_offset_seconds };
+    });
+
+    // Place baseTime in the past relative to now, so simulated transactions are in the recent past
+    const baseTime = Date.now() - (maxOffset + 30) * 1000;
 
     const { runFraudEngine } = require('./fraud_engine/ruleEngine');
-    const result = await runFraudEngine(tx, {
-      allTx: db.transactions || [],
-      allAccounts: db.accounts || [],
-      allAlerts: db.alerts || []
+
+    // Pre-populate all transactions from the chain into a copy of db.transactions
+    // This allows both forward BFS (layering) and backward/rolling window queries (structuring, velocity, dormant activation)
+    // to inspect the entire chain context correctly.
+    const tempAllTx = [...(db.transactions || [])];
+    const chainTxs = chainWithOffsets.map((step, i) => {
+      return {
+        tx_id: `DRY-${uuidv4().slice(0, 8).toUpperCase()}`,
+        sender: step.sender,
+        receiver: step.receiver,
+        amount: Number(step.amount),
+        timestamp: new Date(baseTime + step.ts_offset_seconds * 1000),
+        transaction_type: step.transaction_type || 'UPI',
+        channel: step.channel || 'MOBILE',
+        geo_origin: { city: step.city || 'Mumbai', state: 'Maharashtra', lat: 19.076, lng: 72.877 },
+        description: `Dry Run Chain Step ${i + 1}`,
+        ts_offset_seconds: step.ts_offset_seconds
+      };
     });
 
-    res.json({
-      transaction: tx,
-      result: {
-        finalScore: result.finalScore,
-        riskLevel: result.riskLevel,
-        action: result.action,
-        allFlags: result.allFlags,
-        explanation: result.explanation,
-        traces: result.traces
-      }
-    });
+    // Add them to tempAllTx so they are all queryable
+    tempAllTx.push(...chainTxs);
+
+    const results = [];
+    for (let i = 0; i < chainTxs.length; i++) {
+      const tx = chainTxs[i];
+      // Filter out current tx from allTx passed to engine, to avoid double-counting within rules
+      const ruleAllTx = tempAllTx.filter(t => t.tx_id !== tx.tx_id);
+      
+      const result = await runFraudEngine(tx, {
+        allTx: ruleAllTx,
+        allAccounts: db.accounts || [],
+        allAlerts: db.alerts || []
+      });
+
+      results.push({
+        transaction: tx,
+        result: {
+          finalScore: result.finalScore,
+          riskLevel: result.riskLevel,
+          action: result.action,
+          allFlags: result.allFlags,
+          explanation: result.explanation,
+          traces: result.traces
+        }
+      });
+    }
+
+    if (chain && Array.isArray(chain)) {
+      res.json({ chain: results });
+    } else {
+      res.json(results[0]);
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -570,7 +611,7 @@ app.post('/api/simulator/account', (req, res) => {
   const idx = db.accounts.length;
   const cityData = CITIES.find(c => c.city === city) || CITIES[0];
   const account = {
-    _id: `acc-manual-${uuidv4().slice(0,8)}`,
+    _id: `acc-manual-${uuidv4().slice(0, 8)}`,
     account_id: `ACC${String(idx + 1).padStart(6, '0')}`,
     customer_name,
     kyc_level,
