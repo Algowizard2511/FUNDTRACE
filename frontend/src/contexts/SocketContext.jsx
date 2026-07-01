@@ -27,13 +27,35 @@ export function SocketProvider({ children }) {
     });
 
     s.on('transaction_flagged', (tx) => {
-      setLiveTransactions(prev => prev.map(t => t.tx_id === tx.tx_id ? tx : t));
+      setLiveTransactions(prev => {
+        const exists = prev.some(t => t.tx_id === tx.tx_id);
+        if (exists) {
+          // Update in place — fraud engine has enriched the tx
+          return prev.map(t => t.tx_id === tx.tx_id ? tx : t);
+        } else {
+          // Transaction was not in the live buffer — prepend it so it's visible
+          return [tx, ...prev.slice(0, 99)];
+        }
+      });
       listenersRef.current['transaction_flagged']?.forEach(fn => fn(tx));
     });
 
     s.on('new_alert', (alert) => {
       setLiveAlerts(prev => [alert, ...prev.slice(0, 49)]);
       listenersRef.current['new_alert']?.forEach(fn => fn(alert));
+    });
+
+    s.on('transaction_updated', (tx) => {
+      // Fired after fraud engine completes — contains final anomaly_flag, fraud_type, risk_score
+      setLiveTransactions(prev => {
+        const exists = prev.some(t => t.tx_id === tx.tx_id);
+        if (exists) {
+          return prev.map(t => t.tx_id === tx.tx_id ? tx : t);
+        } else {
+          return [tx, ...prev.slice(0, 99)];
+        }
+      });
+      listenersRef.current['transaction_updated']?.forEach(fn => fn(tx));
     });
 
     s.on('account_created', (account) => {

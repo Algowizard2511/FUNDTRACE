@@ -126,7 +126,20 @@ export default function GraphPage() {
   const [showCleanLinks, setShowCleanLinks] = useState(false); // hide clean edges by default
   const [pendingUpdate, setPendingUpdate] = useState(false);   // notification of new data
 
-  const { liveTransactions } = useSocket();
+  const { liveTransactions, on } = useSocket();
+
+  // Subscribe to transaction_updated events — fires after fraud engine enriches the tx
+  // This is more reliable than watching liveTransactions because it fires even if the
+  // transaction was already scrolled off the live buffer.
+  useEffect(() => {
+    const unsub = on('transaction_updated', (tx) => {
+      if (tx.anomaly_flag) {
+        setPendingUpdate(true);
+        if (autoRefresh) refetch();
+      }
+    });
+    return unsub;
+  }, [on, autoRefresh, refetch]);
 
   const { data, refetch, isLoading } = useQuery({
     queryKey: ['graph', filter.flaggedOnly, filter.hours],

@@ -46,11 +46,23 @@ function RiskBar({ score }) {
 }
 
 export default function TransactionsPage() {
-  const { liveTransactions, connected } = useSocket();
+  const { liveTransactions, connected, on } = useSocket();
   const [allTxs, setAllTxs] = useState([]);
   const [filter, setFilter] = useState({ flagged: false, fraud_type: 'ALL' });
   const [newIds, setNewIds] = useState(new Set());
   const tableRef = useRef(null);
+
+  // When fraud engine finishes (async), update the enriched tx in allTxs in-place
+  useEffect(() => {
+    const unsub = on('transaction_updated', (tx) => {
+      setAllTxs(prev => {
+        const exists = prev.some(t => t.tx_id === tx.tx_id);
+        if (exists) return prev.map(t => t.tx_id === tx.tx_id ? tx : t);
+        return [tx, ...prev.slice(0, 149)];
+      });
+    });
+    return unsub;
+  }, [on]);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['transactions', filter],

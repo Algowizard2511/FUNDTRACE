@@ -116,12 +116,16 @@ function emitTransaction(txData) {
 
   io.emit('new_transaction', txData);
 
-  // ── New: Async modular fraud engine ─────────────────────────────────────────
-  // We call detectFraud asynchronously so the simulator doesn't block.
-  // detectFraud mutates txData in-place (sets anomaly_flag, rule_flags etc.)
-  // and pushes any generated alert into db.alerts.
+  // ── Async modular fraud engine ───────────────────────────────────────────────
+  // detectFraud mutates txData in-place (sets anomaly_flag, rule_flags, fraud_type etc.)
+  // After it completes we re-broadcast the enriched tx so the live feed and graph
+  // both receive the updated anomaly_flag / fraud_type values.
   detectFraud(txData, db, io).then(result => {
+    // Re-broadcast the enriched tx so all listeners (graph, live feed) get updated data
+    io.emit('transaction_updated', txData);
     if (result && result.flags && result.flags.length > 0) {
+      // ruleEngine already emits transaction_flagged internally via io,
+      // but emit again here in case io was not passed through (belt-and-suspenders).
       io.emit('transaction_flagged', txData);
     }
   }).catch(err => console.error('[FraudEngine] async error:', err.message));
