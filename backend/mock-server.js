@@ -798,5 +798,12 @@ server.listen(PORT, () => {
   console.log(`📡 Running on: http://localhost:${PORT}`);
   console.log(`🌐 Open frontend: http://localhost:5173`);
   console.log(`🔑 Login: admin@fundtrace.ai / FundTrace@2024\n`);
+
+
+
+
+
+
+  
   startSimulator();
 });
